@@ -1,4 +1,5 @@
 import aiosqlite
+from datetime import datetime, timedelta
 
 DB_PATH = "equb.db"
 
@@ -11,7 +12,6 @@ async def init_db():
             full_name TEXT,
             lang TEXT DEFAULT 'am'
         );
-
         CREATE TABLE IF NOT EXISTS cars (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
@@ -23,7 +23,6 @@ async def init_db():
             active INTEGER DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             car_id INTEGER,
@@ -31,18 +30,14 @@ async def init_db():
             ticket_no INTEGER,
             full_name TEXT,
             phone TEXT,
-            tx_ref TEXT,
             screenshot_id TEXT,
-            status TEXT DEFAULT 'pending',
+            status TEXT DEFAULT 'held',
             reason TEXT,
+            held_until TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_approved
-        ON orders(car_id, ticket_no) WHERE status='approved';
         """)
         await db.commit()
-
         async with db.execute("SELECT COUNT(*) FROM cars") as c:
             if (await c.fetchone())[0] == 0:
                 await db.execute("""
@@ -66,11 +61,6 @@ async def save_user(uid, username, full_name, lang="am"):
             ON CONFLICT(user_id) DO UPDATE SET
             username=excluded.username, full_name=excluded.full_name
         """, (uid, username, full_name, lang))
-        await db.commit()
-
-async def set_lang(uid, lang):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET lang=? WHERE user_id=?", (lang, uid))
         await db.commit()
 
 # ---------- CARS ----------
@@ -108,25 +98,87 @@ async def update_car(car_id, name, desc, price, tmin, tmax, closing, active):
 async def delete_car(car_id):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM cars WHERE id=?", (car_id,))
+        await db.execute("DELETE FROM orders WHERE car_id=?", (car_id,))
         await db.commit()
 
-# ---------- ORDERS ----------
-async def create_order(car_id, uid, ticket_no, name, phone, tx, screenshot):
+# ---------- TICKETS ----------
+async def _cleanup_expired(db):
+    """ሉል የያዙ ጊዜያቸው ያለፈባቸውን ያስለቅ"""
+    now = datetime.now().isoformat()
+    await db.execute("""
+        UPDATE orders SET status='released'
+        WHERE status='held' AND held_until IS NOT NULL AND held_until < ?
+    """, (now,))
+    await db.commit()
+
+async def taken_numbers(car_id):
+    """ሁሉንም የተያዙ/የተሸጡ/የተዘጉ ቁጥሮች ይመልሳል"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await _cleanup_expired(db)
+        async with db.execute("""
+            SELECT ticket_no FROM orders
+            WHERE car_id=? AND status IN ('held','pending','approved','blocked')
+        """, (car_id,)) as c:
+            return {row[0] for row in await c.fetchall()}
+
+async def is_ticket_available(car_id, ticket_no):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await _cleanup_expired(db)
+        async with db.execute("""
+            SELECT 1 FROM orders
+            WHERE car_id=? AND ticket_no=?
+            AND status IN ('held','pending','approved','blocked')
+            LIMIT 1
+        """, (car_id, ticket_no)) as c:
+            return (await c.fetchone()) is None
+
+async def hold_ticket(car_id, user_id, ticket_no, minutes=15):
+    """ቁጥር በተጠቃሚ ተይዟል — ጊዜያዊ"""
+    if not await is_ticket_available(car_id, ticket_no):
+        return None
+    until = (datetime.now() + timedelta(minutes=minutes)).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("""
-            INSERT INTO orders(car_id,user_id,ticket_no,full_name,phone,tx_ref,screenshot_id)
-            VALUES(?,?,?,?,?,?,?)
-        """, (car_id, uid, ticket_no, name, phone, tx, screenshot))
+            INSERT INTO orders(car_id,user_id,ticket_no,status,held_until)
+            VALUES(?,?,?, 'held', ?)
+        """, (car_id, user_id, ticket_no, until))
         await db.commit()
         return cur.lastrowid
 
-async def is_ticket_taken(car_id, ticket_no):
+async def release_order(oid):
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("""
-            SELECT 1 FROM orders WHERE car_id=? AND ticket_no=?
-            AND status IN ('approved','pending')
-        """, (car_id, ticket_no)) as c:
-            return await c.fetchone() is not None
+        await db.execute(
+            "UPDATE orders SET status='released', held_until=NULL WHERE id=?",
+            (oid,))
+        await db.commit()
+
+async def block_range(car_id, n_from, n_to, reason=""):
+    """Admin ቁጥሮችን ያግዳል"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        inserted = 0
+        for n in range(n_from, n_to + 1):
+            async with db.execute("""
+                SELECT 1 FROM orders WHERE car_id=? AND ticket_no=?
+                AND status IN ('held','pending','approved','blocked') LIMIT 1
+            """, (car_id, n)) as c:
+                if await c.fetchone():
+                    continue
+            await db.execute("""
+                INSERT INTO orders(car_id,user_id,ticket_no,status,reason)
+                VALUES(?,NULL,?, 'blocked', ?)
+            """, (car_id, n, reason))
+            inserted += 1
+        await db.commit()
+        return inserted
+
+async def confirm_hold(oid, full_name, phone, screenshot_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE orders SET full_name=?, phone=?, screenshot_id=?,
+            status='pending', held_until=NULL
+            WHERE id=? AND status='held'
+        """, (full_name, phone, screenshot_id, oid))
+        await db.commit()
 
 async def get_order(oid):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -136,72 +188,85 @@ async def get_order(oid):
 async def update_order_status(oid, status, reason=None):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "UPDATE orders SET status=?, reason=? WHERE id=?",
+            "UPDATE orders SET status=?, reason=?, held_until=NULL WHERE id=?",
             (status, reason, oid))
         await db.commit()
 
 async def user_orders(uid):
     async with aiosqlite.connect(DB_PATH) as db:
+        await _cleanup_expired(db)
         async with db.execute("""
             SELECT o.id, o.ticket_no, o.status, c.name FROM orders o
             LEFT JOIN cars c ON c.id=o.car_id
-            WHERE o.user_id=? ORDER BY o.id DESC
+            WHERE o.user_id=? AND o.status NOT IN ('released')
+            ORDER BY o.id DESC
         """, (uid,)) as c:
             return await c.fetchall()
 
 async def list_orders(car_id=None, status=None, limit=200):
     q = """SELECT o.id,o.car_id,o.user_id,o.ticket_no,o.full_name,o.phone,
-           o.tx_ref,o.screenshot_id,o.status,o.reason,o.created_at,c.name
+           o.screenshot_id,o.status,o.reason,o.created_at,c.name
            FROM orders o LEFT JOIN cars c ON c.id=o.car_id WHERE 1=1"""
     params = []
     if car_id:
         q += " AND o.car_id=?"; params.append(car_id)
     if status:
         q += " AND o.status=?"; params.append(status)
+    else:
+        q += " AND o.status NOT IN ('released')"
     q += " ORDER BY o.id DESC LIMIT ?"; params.append(limit)
     async with aiosqlite.connect(DB_PATH) as db:
+        await _cleanup_expired(db)
         async with db.execute(q, params) as c:
             return await c.fetchall()
 
 async def car_stats(car_id):
     async with aiosqlite.connect(DB_PATH) as db:
+        await _cleanup_expired(db)
         async with db.execute(
             "SELECT ticket_min,ticket_max FROM cars WHERE id=?", (car_id,)
         ) as c:
             row = await c.fetchone()
         if not row:
             return {"total":0,"taken":0,"remaining":0,
-                    "approved":0,"pending":0,"rejected":0}
+                    "approved":0,"pending":0,"held":0,"blocked":0}
         tmin, tmax = row
         async with db.execute("""
-            SELECT status, COUNT(*) FROM orders WHERE car_id=? GROUP BY status
+            SELECT status, COUNT(*) FROM orders
+            WHERE car_id=? AND status NOT IN ('released')
+            GROUP BY status
         """, (car_id,)) as c:
             rows = await c.fetchall()
         counts = {s: n for s, n in rows}
         approved = counts.get("approved", 0)
         pending = counts.get("pending", 0)
-        rejected = counts.get("rejected", 0)
+        held = counts.get("held", 0)
+        blocked = counts.get("blocked", 0)
         total = tmax - tmin + 1
-        taken = approved + pending
+        taken = approved + pending + held + blocked
         return {
             "total": total, "taken": taken, "remaining": total - taken,
-            "approved": approved, "pending": pending, "rejected": rejected
+            "approved": approved, "pending": pending,
+            "held": held, "blocked": blocked
         }
 
 async def global_stats():
     async with aiosqlite.connect(DB_PATH) as db:
+        await _cleanup_expired(db)
         async with db.execute("SELECT COUNT(*) FROM users") as c:
             users = (await c.fetchone())[0]
         async with db.execute("SELECT COUNT(*) FROM cars WHERE active=1") as c:
             cars = (await c.fetchone())[0]
-        async with db.execute(
-            "SELECT status,COUNT(*) FROM orders GROUP BY status"
-        ) as c:
+        async with db.execute("""
+            SELECT status,COUNT(*) FROM orders
+            WHERE status NOT IN ('released') GROUP BY status
+        """) as c:
             rows = await c.fetchall()
         counts = {s: n for s, n in rows}
         return {
             "users": users, "cars": cars,
             "pending": counts.get("pending", 0),
             "approved": counts.get("approved", 0),
-            "rejected": counts.get("rejected", 0),
+            "held": counts.get("held", 0),
+            "blocked": counts.get("blocked", 0),
         }
