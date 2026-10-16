@@ -1,0 +1,18 @@
+# ===== Telegram Bot =====
+BOT_TOKEN=8471503151:AAEXzkClFEKJzpkvoHr3Q6kLoI4sbPQZQDw
+ADMIN_GROUP_ID=-1003909295195
+ADMIN_IDS=8737058474,987654321
+SUPPORT_USERNAME=@YourSupport
+
+# ===== Webhook (Render) =====
+WEBHOOK_URL=https://your-app.onrender.com
+WEBHOOK_PATH=/webhook
+WEBHOOK_SECRET=change_this_secret_123
+
+# ===== Admin Panel =====
+ADMIN_PASSWORD=122127
+SECRET_KEY=change_this_to_random_string
+
+# ===== Server =====
+HOST=0.0.0.0
+PORT=8080
