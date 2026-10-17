@@ -30,6 +30,7 @@ PORT = _int("PORT", 8080)
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "equb.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "") # 👈 ይህንን ጨምሩ
 HOLD_MINUTES = max(1, _int("HOLD_MINUTES", 15))
 SESSION_TTL_SECONDS = max(300, _int("SESSION_TTL_SECONDS", 8 * 60 * 60))
 LOGIN_MAX_ATTEMPTS = max(3, _int("LOGIN_MAX_ATTEMPTS", 5))
