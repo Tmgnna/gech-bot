@@ -1,7 +1,7 @@
 # ============================================================
 #  CAR EQUB BOT + ADMIN PANEL  — Professional Edition v2
 # ============================================================
-import asyncio, hmac, hashlib, time, logging, re, random
+import asyncio, hmac, hashlib, time, logging, re, random, html, os
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -19,7 +19,7 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 import config as cfg
 import database as db
 
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=getattr(logging, cfg.LOG_LEVEL, logging.INFO),
                     format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("equb")
 
@@ -202,7 +202,7 @@ T = {
 
 def t(lang, key, **kw):
     txt = T.get(lang, T["am"]).get(key, "")
-    return txt.format(**kw) if kw else txt
+    return txt.format(**{k: html.escape(str(v), quote=True) for k, v in kw.items()}) if kw else txt
 
 # ============================================================
 #  KEYBOARDS
@@ -227,7 +227,7 @@ def cars_kb(lang, cars):
     rows = []
     for c in cars:
         rows.append([InlineKeyboardButton(
-            text=f"🚗 {c[1]}  ·  {c[3]} ብር",
+            text=f"🚗 {html.escape(str(c[1]))}  ·  {c[3]} ብር",
             callback_data=f"car:{c[0]}"
         )])
     rows.append([InlineKeyboardButton(text=t(lang, "home"), callback_data="menu:home")])
@@ -572,7 +572,7 @@ async def pay_paid(cb: CallbackQuery, state: FSMContext):
     lang = await get_lang(cb.from_user.id)
     oid = int(cb.data.split(":")[2])
     o = await db.get_order(oid)
-    if not o or o[7] != "held":
+    if not o or o[2] != cb.from_user.id or o[7] != "held":
         await cb.answer(t(lang, "session_expired"), show_alert=True); return
     await state.update_data(oid=oid)
     await state.set_state(BuyFSM.shot)
@@ -583,7 +583,10 @@ async def pay_paid(cb: CallbackQuery, state: FSMContext):
 async def pay_cancel(cb: CallbackQuery, state: FSMContext):
     lang = await get_lang(cb.from_user.id)
     oid = int(cb.data.split(":")[2])
-    await db.release_order(oid)
+    o = await db.get_order(oid)
+    if not o or o[2] != cb.from_user.id or o[7] != "held":
+        await cb.answer("Order not found or no longer held", show_alert=True); return
+    await db.release_order(oid, user_id=cb.from_user.id)
     await state.clear()
     try:
         await cb.message.edit_text(t(lang, "canceled"),
@@ -634,7 +637,10 @@ async def f_phone(msg: Message, state: FSMContext):
 async def cancel_order(cb: CallbackQuery, state: FSMContext):
     lang = await get_lang(cb.from_user.id)
     oid = int(cb.data.split(":")[1])
-    await db.release_order(oid)
+    o = await db.get_order(oid)
+    if not o or o[2] != cb.from_user.id or o[7] != "held":
+        await cb.answer("Order not found or no longer held", show_alert=True); return
+    await db.release_order(oid, user_id=cb.from_user.id)
     await state.clear()
     try:
         await cb.message.edit_caption(caption=t(lang, "canceled"))
@@ -650,9 +656,11 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
     oid = int(cb.data.split(":")[1])
     d = await state.get_data()
     o = await db.get_order(oid)
-    if not o or o[7] != "held":
+    if not o or o[2] != cb.from_user.id or o[7] != "held" or d.get("oid") != oid or not d.get("shot"):
         await cb.answer(t(lang, "session_expired"), show_alert=True); return
-    await db.confirm_hold(oid, d.get("name", ""), d.get("phone", ""), d.get("shot"))
+    changed = await db.confirm_hold(oid, d.get("name", ""), d.get("phone", ""), d.get("shot"), user_id=cb.from_user.id)
+    if not changed:
+        await cb.answer(t(lang, "session_expired"), show_alert=True); return
     await state.clear()
     try:
         await cb.message.edit_caption(caption=t(lang, "sent"))
@@ -662,9 +670,9 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
                             reply_markup=main_menu(lang))
     admin_text = (
         f"🔔 <b>አዲስ ጥያቄ #{oid}</b>\n\n"
-        f"🚗 {d['car_name']}\n"
-        f"👤 {d['name']}\n"
-        f"📱 {d['phone']}\n"
+        f"🚗 {html.escape(str(d['car_name']), quote=True)}\n"
+        f"👤 {html.escape(str(d['name']), quote=True)}\n"
+        f"📱 {html.escape(str(d['phone']), quote=True)}\n"
         f"🎟️ ዕጣ: <b>#{d['ticket']}</b>\n"
         f"💬 @{cb.from_user.username or '-'} — <code>{cb.from_user.id}</code>"
     )
@@ -683,7 +691,9 @@ async def adm_ok(cb: CallbackQuery):
     oid = int(cb.data.split(":")[2])
     o = await db.get_order(oid)
     if not o: await cb.answer("Not found"); return
-    await db.update_order_status(oid, "approved")
+    changed = await db.update_order_status(oid, "approved", expected_status="pending", actor=f"telegram:{cb.from_user.id}")
+    if not changed:
+        await cb.answer("Already processed", show_alert=True); return
     car = await db.get_car(o[1])
     try:
         await bot.send_message(o[2], t("am", "approved",
@@ -712,8 +722,9 @@ async def adm_rej_reason(msg: Message, state: FSMContext):
     d = await state.get_data()
     oid = d.get("rej_oid"); await state.clear()
     o = await db.get_order(oid)
-    if not o: await msg.answer("Order not found"); return
-    await db.update_order_status(oid, "rejected", msg.text.strip())
+    if not o or o[7] != "pending": await msg.answer("Order not found or already processed"); return
+    changed = await db.update_order_status(oid, "rejected", msg.text.strip(), expected_status="pending", actor=f"telegram:{msg.from_user.id}")
+    if not changed: await msg.answer("Order already processed"); return
     try:
         await bot.send_message(o[2], t("am", "rejected", reason=msg.text.strip()))
     except Exception as e: log.error(e)
@@ -757,7 +768,8 @@ def verify_token(tok):
         exp = hmac.new(cfg.SECRET_KEY.encode(), ts.encode(),
                        hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, exp): return False
-        if time.time() - int(ts) > 7 * 86400: return False
+        age = time.time() - int(ts)
+        if age < -30 or age > cfg.SESSION_TTL_SECONDS: return False
         return True
     except Exception:
         return False
@@ -879,11 +891,21 @@ def layout(title, body, active=""):
   {link('/admin/orders','<span class="ic">📋</span>Orders','orders')}
   {link('/admin/holds','<span class="ic">🔒</span>Holds','holds')}
   {link('/admin/broadcast','<span class="ic">📢</span>Send','broadcast')}
+  {link('/admin/audit','<span class="ic">🧾</span>Audit','audit')}
   {link('/admin/logout','<span class="ic">🚪</span>Out','')}
 </div>
 </body></html>"""
 
 # ---------- Auth ----------
+_LOGIN_FAILURES = {}
+
+def _login_locked(ip):
+    count, since = _LOGIN_FAILURES.get(ip, (0, 0))
+    if time.time() - since >= cfg.LOGIN_LOCK_SECONDS:
+        _LOGIN_FAILURES.pop(ip, None)
+        return False
+    return count >= cfg.LOGIN_MAX_ATTEMPTS
+
 async def login_get(req):
     err = req.query.get("err", "")
     msg = ('<p style="color:#f4212e;text-align:center;margin-bottom:14px;'
@@ -900,17 +922,24 @@ async def login_get(req):
 </form></div></body></html>""", content_type="text/html")
 
 async def login_post(req):
+    ip = req.remote or "unknown"
+    if _login_locked(ip):
+        raise web.HTTPFound("/admin/login?err=locked")
     data = await req.post()
-    if data.get("pw") == cfg.ADMIN_PASSWORD:
+    supplied = str(data.get("pw", ""))
+    if hmac.compare_digest(supplied, cfg.ADMIN_PASSWORD):
+        _LOGIN_FAILURES.pop(ip, None)
         r = web.HTTPFound("/admin")
-        r.set_cookie("auth", make_token(), max_age=7*86400,
-                     httponly=True, samesite="Lax")
+        r.set_cookie("auth", make_token(), max_age=cfg.SESSION_TTL_SECONDS,
+                     httponly=True, secure=cfg.COOKIE_SECURE, samesite="Lax", path="/")
         raise r
+    count, since = _LOGIN_FAILURES.get(ip, (0, time.time()))
+    _LOGIN_FAILURES[ip] = (count + 1, since)
     raise web.HTTPFound("/admin/login?err=1")
 
 async def logout(req):
     r = web.HTTPFound("/admin/login")
-    r.del_cookie("auth")
+    r.del_cookie("auth", path="/")
     raise r
 
 # ---------- Dashboard ----------
@@ -921,7 +950,7 @@ async def dash(req):
     for c in cars:
         s = await db.car_stats(c[0])
         car_rows += f"""<tr>
-        <td>#{c[0]}</td><td>{c[1]}</td>
+        <td>#{c[0]}</td><td>{html.escape(str(c[1]), quote=True)}</td>
         <td>{s['approved']}✅ {s['pending']}⏳ {s['held']}🔒 {s['blocked']}🚫</td>
         <td><b style="color:#00ba7c">{s['remaining']}</b></td></tr>"""
     body = f"""
@@ -938,6 +967,8 @@ async def dash(req):
       <div class="val">{g['held']}</div></div>
       <div class="stat red"><div class="lbl">Blocked</div>
       <div class="val">{g['blocked']}</div></div>
+      <div class="stat green"><div class="lbl">Approved value (Birr)</div>
+      <div class="val">{g.get('approved_revenue', 0):,}</div></div>
     </div>
     <div class="card"><h2>🚗 Cars Overview</h2>
     <table><thead><tr><th>ID</th><th>Name</th>
@@ -958,10 +989,10 @@ async def cars_list(req):
     for c in cars:
         s = await db.car_stats(c[0])
         img = c[8] if len(c) > 8 and c[8] else ""
-        img_html = f'<img src="{img}" style="width:60px;height:60px;border-radius:8px;object-fit:cover">' if img else '🚗'
+        img_html = f'<img src="{html.escape(str(img), quote=True)}" style="width:60px;height:60px;border-radius:8px;object-fit:cover">' if img else '🚗'
         cards += f"""<div class="order-card">
           <div class="row">
-            <span>{img_html} <b>#{c[0]}</b> {c[1]}</span>
+            <span>{img_html} <b>#{c[0]}</b> {html.escape(str(c[1]), quote=True)}</span>
             <span>{'🟢' if c[7] else '🔴'}</span>
           </div>
           <div class="row"><span class="k">Price</span>
@@ -1031,7 +1062,7 @@ async def car_edit_get(req):
     <div class="card"><h2>✏️ Edit Car #{cid}</h2>
     <form method="POST" action="/admin/cars/{cid}">
       <label>የመኪና ስም</label>
-      <input name="name" value="{c[1]}" required>
+      <input name="name" value="{html.escape(str(c[1]), quote=True)}" required>
       <label>ዋጋ (ብር)</label>
       <input name="price" type="number" value="{c[3]}">
       <div class="form-grid">
@@ -1041,16 +1072,16 @@ async def car_edit_get(req):
         <input name="tmax" type="number" value="{c[5]}"></div>
       </div>
       <label>የመዝጊያ ቀን</label>
-      <input name="closing" value="{c[6] or ''}">
+      <input name="closing" value="{html.escape(str(c[6] or ''), quote=True)}">
       <label>ፎቶ URL</label>
-      <input name="image" value="{img}" placeholder="https://example.com/car.jpg">
+      <input name="image" value="{html.escape(str(img), quote=True)}" placeholder="https://example.com/car.jpg">
       <label>ሁኔታ</label>
       <select name="active">
         <option value="1" {'selected' if c[7] else ''}>🟢 ንቁ</option>
         <option value="0" {'' if c[7] else 'selected'}>🔴 ተዘግቷል</option>
       </select>
       <label>መግለጫ</label>
-      <textarea name="desc" rows="2">{c[2] or ''}</textarea>
+      <textarea name="desc" rows="2">{html.escape(str(c[2] or ''))}</textarea>
       <button class="btn full">💾 Save</button>
       <a href="/admin/cars" class="btn full"
       style="background:#232a33;margin-top:8px;display:block;text-align:center">
@@ -1106,7 +1137,7 @@ async def orders_list(req):
     car_opts = '<option value="">ሁሉም</option>'
     for c in cars:
         sel = "selected" if car_filter == c[0] else ""
-        car_opts += f'<option value="{c[0]}" {sel}>#{c[0]} {c[1]}</option>'
+        car_opts += f'<option value="{c[0]}" {sel}>#{c[0]} {html.escape(str(c[1]), quote=True)}</option>'
     st_opts = '<option value="">ሁሉም</option>'
     for s in valid:
         sel = "selected" if status_filter == s else ""
@@ -1137,13 +1168,13 @@ async def orders_list(req):
         reason_html = ""
         if reason:
             reason_html = (f'<div class="row"><span class="k">Reason</span>'
-                           f'<span style="color:#71767b">{reason}</span></div>')
-        user_line = f"{name}" if name else "—"
+                           f'<span style="color:#71767b">{html.escape(str(reason), quote=True)}</span></div>')
+        user_line = html.escape(str(name), quote=True) if name else "—"
         if uid:
             user_line = f'<a href="tg://user?id={uid}">{name or "user"}</a>'
         cards += f"""<div class="order-card">
           <div class="row">
-            <span><b>#{oid}</b> · {carname or '-'}</span>
+            <span><b>#{oid}</b> · {html.escape(str(carname or '-'), quote=True)}</span>
             <span class="badge {st}">{st}</span>
           </div>
           <div class="row"><span class="k">Ticket</span>
@@ -1151,7 +1182,7 @@ async def orders_list(req):
           <div class="row"><span class="k">User</span>
           <span>{user_line}</span></div>
           <div class="row"><span class="k">Phone</span>
-          {f'<a href="tel:{phone}">{phone}</a>' if phone else '—'}</div>
+          {f'<a href="tel:{html.escape(str(phone), quote=True)}">{html.escape(str(phone), quote=True)}</a>' if phone else '—'}</div>
           {reason_html}
           <div class="row"><span class="k">Date</span>
           <span style="font-size:11px;color:#71767b">{created[:16]}</span></div>
@@ -1177,13 +1208,14 @@ async def orders_list(req):
 async def order_ok(req):
     oid = int(req.match_info["id"])
     o = await db.get_order(oid)
-    if o and o[7] != "approved":
-        await db.update_order_status(oid, "approved")
-        car = await db.get_car(o[1])
-        try:
-            await bot.send_message(o[2], t("am", "approved",
-                car=car[1] if car else "-", ticket=o[3]))
-        except Exception as e: log.error(e)
+    if o and o[7] == "pending":
+        changed = await db.update_order_status(oid, "approved", expected_status="pending", actor="web_admin")
+        if changed:
+            car = await db.get_car(o[1])
+            try:
+                await bot.send_message(o[2], t("am", "approved",
+                    car=car[1] if car else "-", ticket=o[3]))
+            except Exception as e: log.error(e)
     raise web.HTTPFound(req.headers.get("Referer", "/admin/orders"))
 
 async def order_no(req):
@@ -1191,11 +1223,12 @@ async def order_no(req):
     d = await req.post()
     reason = (d.get("reason") or "").strip() or "ያልተገለጸ"
     o = await db.get_order(oid)
-    if o:
-        await db.update_order_status(oid, "rejected", reason)
-        try:
-            await bot.send_message(o[2], t("am", "rejected", reason=reason))
-        except Exception as e: log.error(e)
+    if o and o[7] == "pending":
+        changed = await db.update_order_status(oid, "rejected", reason, expected_status="pending", actor="web_admin")
+        if changed:
+            try:
+                await bot.send_message(o[2], t("am", "rejected", reason=reason))
+            except Exception as e: log.error(e)
     raise web.HTTPFound(req.headers.get("Referer", "/admin/orders"))
 
 async def order_release(req):
@@ -1208,7 +1241,7 @@ async def holds_page(req):
     cars = await db.list_cars(active_only=False)
     car_opts = '<option value="">መኪና ይምረጡ</option>'
     for c in cars:
-        car_opts += f'<option value="{c[0]}">#{c[0]} {c[1]} ({c[4]}–{c[5]})</option>'
+        car_opts += f'<option value="{c[0]}">#{c[0]} {html.escape(str(c[1]), quote=True)} ({c[4]}–{c[5]})</option>'
 
     orders = await db.list_orders(status="held", limit=100)
     blocked = await db.list_orders(status="blocked", limit=100)
@@ -1274,7 +1307,7 @@ async def broadcast_page(req):
     cars = await db.list_cars(active_only=False)
     car_opts = '<option value="all">👥 ሁሉም ተጠቃሚዎች (All Users)</option>'
     for c in cars:
-        car_opts += f'<option value="{c[0]}">🚗 #{c[0]} {c[1]} የገዙ</option>'
+        car_opts += f'<option value="{c[0]}">🚗 #{c[0]} {html.escape(str(c[1]), quote=True)} የገዙ</option>'
     body = f"""
     <div class="card">
       <h2>📢 መልእክት ላክ (Broadcast)</h2>
@@ -1337,6 +1370,20 @@ async def broadcast_send(req):
     return web.Response(text=layout("Broadcast Result", body, "broadcast"),
                         content_type="text/html")
 
+async def audit_page(req):
+    rows = await db.list_audit_logs(250)
+    cards = ""
+    for row in rows:
+        lid, actor, action, entity_type, entity_id, details, created = row
+        cards += f"""<div class="order-card">
+          <div class="row"><b>#{lid} · {html.escape(str(action), quote=True)}</b>
+          <span style="font-size:11px;color:#71767b">{html.escape(str(created), quote=True)}</span></div>
+          <div class="row"><span class="k">Actor</span><span>{html.escape(str(actor), quote=True)}</span></div>
+          <div class="row"><span class="k">Entity</span><span>{html.escape(str(entity_type or '-'), quote=True)} #{entity_id or '-'}</span></div>
+          <div class="row"><span class="k">Details</span><span>{html.escape(str(details or '-'), quote=True)}</span></div>
+        </div>"""
+    return web.Response(text=layout("Audit Log", cards or '<div class="empty">No audit events yet</div>', "audit"), content_type="text/html")
+
 # ============================================================
 #  APP SETUP
 # ============================================================
@@ -1363,6 +1410,7 @@ def build_web():
     app.router.add_post("/admin/holds/block", hold_block)
     app.router.add_get("/admin/broadcast", broadcast_page)
     app.router.add_post("/admin/broadcast/send", broadcast_send)
+    app.router.add_get("/admin/audit", audit_page)
     return app
 
 async def on_startup(app):
@@ -1383,8 +1431,8 @@ async def on_shutdown(app):
         except Exception: pass
 
 def main():
-    if not cfg.BOT_TOKEN:
-        raise SystemExit("❌ BOT_TOKEN is missing")
+    cfg.validate_settings()
+    db.DB_PATH = cfg.DATABASE_PATH
     app = build_web()
     if cfg.USE_WEBHOOK:
         SimpleRequestHandler(dispatcher=dp, bot=bot,
