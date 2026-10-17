@@ -1,5 +1,6 @@
 # ============================================================
-#  CAR EQUB BOT + ADMIN PANEL  — Professional Edition v2
+#  CAR EQUB BOT + ADMIN PANEL  — Professional Edition v3
+#  Features: Saved Profile (1-time name/phone) + Quick Buy
 # ============================================================
 import asyncio, hmac, hashlib, time, logging, re, random, html, os
 from aiohttp import web
@@ -50,6 +51,7 @@ T = {
             "🍀 መልካም ዕድል!"
         ),
         "buy": "🎟️ ዕጣ ግዛ",
+        "quick_btn": "⚡ ፈጣን ግዢ",           # ✅ NEW
         "my": "📋 የእኔ ዕጣዎች",
         "how": "📖 እንዴት እንደሚሰራ",
         "support": "☎️ ድጋፍ",
@@ -148,6 +150,7 @@ T = {
             "🍀 Carraa gaarii!"
         ),
         "buy": "🎟️ Carraa biti",
+        "quick_btn": "⚡ Saffisaa biti",       # ✅ NEW
         "my": "📋 Carraa koo",
         "how": "📖 Akkamitti hojjeta",
         "support": "☎️ Deeggarsa",
@@ -241,6 +244,9 @@ def lang_kb():
 def main_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t(lang, "buy"), callback_data="menu:buy")],
+        # ✅ NEW: Quick Buy — 1 ጠቅታ ዕጣ ይይዛል
+        [InlineKeyboardButton(text=t(lang, "quick_btn"),
+                              callback_data="menu:quick")],
         [InlineKeyboardButton(text=t(lang, "my"), callback_data="menu:my")],
         [
             InlineKeyboardButton(text=t(lang, "how"), callback_data="menu:how"),
@@ -485,7 +491,6 @@ async def menu_buy(cb: CallbackQuery, state: FSMContext):
     if not cars:
         await cb.answer("📭 አሁን የሚገኝ ዕጣ የለም። እባክዎ ቆይተው ይሞክሩ።", show_alert=True)
         return
-    # Keep the customer journey simple: use the first active campaign automatically.
     car = cars[0]
     car_id = car[0]
     stats = await db.car_stats(car_id)
@@ -509,6 +514,49 @@ async def menu_buy(cb: CallbackQuery, state: FSMContext):
     except Exception:
         await cb.message.answer(text, reply_markup=kb)
     await cb.answer()
+
+# ✅ NEW: Quick Buy — 1 ጠቅታ ዕጣ ይይዛል
+@dp.callback_query(F.data == "menu:quick")
+async def menu_quick(cb: CallbackQuery, state: FSMContext):
+    """⚡ ራስ-ሰር ቁጥር ይይዝ + ወዲያውኑ ወደ ክፍያ ይሂድ።"""
+    await state.clear()
+    lang = await get_lang(cb.from_user.id)
+    cars = await db.list_cars(active_only=True)
+    if not cars:
+        await cb.answer("📭 አሁን የሚገኝ ዕጣ የለም።", show_alert=True)
+        return
+    car = cars[0]
+    car_id = car[0]
+
+    stats = await db.car_stats(car_id)
+    if stats["remaining"] <= 0:
+        await cb.answer(t(lang, "no_available"), show_alert=True)
+        return
+
+    taken = await db.taken_numbers(car_id)
+    avail = [n for n in range(car[4], car[5] + 1) if n not in taken]
+    if not avail:
+        await cb.answer(t(lang, "no_available"), show_alert=True)
+        return
+
+    n = random.choice(avail)
+    oid = await db.hold_ticket(car_id, cb.from_user.id, n, cfg.HOLD_MINUTES)
+    if not oid:
+        await cb.answer("⚠️ እንደገና ይሞክሩ።", show_alert=True)
+        return
+
+    await state.update_data(
+        oid=oid, ticket=n, car_id=car_id,
+        car_name=car[1], price=car[3],
+        tmin=car[4], tmax=car[5])
+
+    txt = t(lang, "ticket_held", n=n, mins=cfg.HOLD_MINUTES, price=car[3])
+    try:
+        await cb.message.edit_text(txt)
+    except Exception:
+        await cb.message.answer(txt)
+    await cb.message.answer(t(lang, "banks"), reply_markup=pay_kb(lang, oid))
+    await cb.answer("⚡ ዕጣው ተይዟል!")
 
 # ---------- Car Detail ----------
 @dp.callback_query(F.data.startswith("car:"))
@@ -654,10 +702,24 @@ async def pay_cancel(cb: CallbackQuery, state: FSMContext):
         await cb.message.answer(t(lang, "canceled"))
     await cb.answer()
 
+# 🔄 MODIFIED: ፕሮፋይል ካለ → ስም/ስልክ ሳይጠይቅ ወደ ማረጋገጫ ይዘልላል
 @dp.message(BuyFSM.shot, F.photo)
 async def f_shot(msg: Message, state: FSMContext):
     lang = await get_lang(msg.from_user.id)
     await state.update_data(shot=msg.photo[-1].file_id)
+
+    # 💾 ፕሮፋይል ካለ → ስም/ስልክ ሳይጠይቅ ወደ ማረጋገጫ
+    saved_name, saved_phone = await db.get_profile(msg.from_user.id)
+    if saved_name and saved_phone:
+        await state.update_data(name=saved_name, phone=saved_phone)
+        d = await state.get_data()
+        await state.set_state(BuyFSM.confirm)
+        txt = t(lang, "confirm", car=d["car_name"], ticket=d["ticket"],
+                name=saved_name, phone=saved_phone)
+        await msg.answer_photo(d["shot"], caption=txt,
+                               reply_markup=confirm_kb(lang, d["oid"]))
+        return
+
     await state.set_state(BuyFSM.name)
     await msg.answer(t(lang, "ask_name"))
 
@@ -715,6 +777,7 @@ async def cancel_order(cb: CallbackQuery, state: FSMContext):
         await cb.message.answer(home_text, reply_markup=main_menu(lang))
     await cb.answer()
 
+# 🔄 MODIFIED: ፕሮፋይል ያስቀምጣል (አዲስ ግዢ ፈጣን እንዲሆን)
 @dp.callback_query(F.data.startswith("ok:"))
 async def confirm_order(cb: CallbackQuery, state: FSMContext):
     lang = await get_lang(cb.from_user.id)
@@ -726,6 +789,13 @@ async def confirm_order(cb: CallbackQuery, state: FSMContext):
     changed = await db.confirm_hold(oid, d.get("name", ""), d.get("phone", ""), d.get("shot"), user_id=cb.from_user.id)
     if not changed:
         await cb.answer(t(lang, "session_expired"), show_alert=True); return
+
+    # 💾 ፕሮፋይል አስቀምጥ — ቀጣይ ግዢዎች ፈጣን ይሆናሉ
+    try:
+        await db.save_profile(cb.from_user.id, d.get("name", ""), d.get("phone", ""))
+    except Exception as e:
+        log.warning("Could not save profile: %s", e)
+
     await state.clear()
     try:
         await cb.message.edit_caption(caption=t(lang, "sent"))
@@ -802,10 +872,9 @@ async def adm_rej_reason(msg: Message, state: FSMContext):
     await msg.answer(f"❌ Order #{oid} ተመልሷል።")
 
 # ============================================================
-#  AUTO REMINDER (Feature 8)
+#  AUTO REMINDER
 # ============================================================
 async def reminder_task():
-    """በየ30 ሰከንዱ የሚያልቁ ቲኬቶችን ያሳውቃል"""
     while True:
         try:
             await asyncio.sleep(30)
@@ -813,10 +882,7 @@ async def reminder_task():
             for oid, uid, ticket_no, _ in expiring:
                 lang = await get_lang(uid)
                 try:
-                    await bot.send_message(
-                        uid,
-                        t(lang, "reminder", ticket=ticket_no)
-                    )
+                    await bot.send_message(uid, t(lang, "reminder", ticket=ticket_no))
                     await db.mark_reminder_sent(oid)
                 except Exception as e:
                     log.error(f"Reminder failed for {uid}: {e}")
@@ -1373,7 +1439,7 @@ async def hold_block(req):
         log.error(f"Block failed: {e}")
     raise web.HTTPFound("/admin/holds")
 
-# ---------- Broadcast (Feature 4) ----------
+# ---------- Broadcast ----------
 async def broadcast_page(req):
     cars = await db.list_cars(active_only=False)
     car_opts = '<option value="all">👥 ሁሉም ተጠቃሚዎች (All Users)</option>'
@@ -1486,10 +1552,9 @@ def build_web():
 
 async def on_startup(app):
     await db.init_db()
-    # Start reminder task
     asyncio.create_task(reminder_task())
     log.info("🔔 Reminder task started")
-    
+
     if cfg.USE_WEBHOOK:
         url = f"{cfg.WEBHOOK_URL}{cfg.WEBHOOK_PATH}"
         await bot.set_webhook(url, secret_token=cfg.WEBHOOK_SECRET,
