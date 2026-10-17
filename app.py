@@ -1,6 +1,6 @@
 # ============================================================
-#  CAR EQUB BOT + ADMIN PANEL  — Professional Edition v3
-#  Features: Saved Profile (1-time name/phone) + Quick Buy
+#  CAR EQUB BOT + ADMIN PANEL  — Professional Edition v4
+#  Features: Saved Profile, Quick Buy, Auto-Submit, Simplified UI
 # ============================================================
 import asyncio, hmac, hashlib, time, logging, re, random, html, os
 from aiohttp import web
@@ -12,8 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardRemove
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 )
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
@@ -50,22 +49,13 @@ T = {
             "👇 ለመሳተፍ <b>«ዕጣ ግዛ»</b> የሚለውን ይጫኑ።\n"
             "🍀 መልካም ዕድል!"
         ),
-        "buy": "🎟️ ዕጣ ግዛ",
-        "quick_btn": "⚡ ፈጣን ግዢ",           # ✅ NEW
+        "quick_btn": "⚡ ፈጣን ግዢ (በራስ-ሰር)",
+        "buy": "✍️ ቁጥር መምረጥ (በእጅ)",
         "my": "📋 የእኔ ዕጣዎች",
         "how": "📖 እንዴት እንደሚሰራ",
         "support": "☎️ ድጋፍ",
         "back": "🔙 ተመለስ",
         "home": "🏠 መነሻ",
-        "pick_car": "🎟️ <b>የዕጣ ግዢ እንጀምር!</b>\n\nከታች የዕጣ ቁጥር የመምረጫ ዘዴ ይምረጡ።",
-        "car_info": (
-            "🚗 <b>{name}</b>\n{desc}\n\n"
-            "💰 ዋጋ: <b>{price} ብር</b>\n"
-            "📅 የመዝጊያ ቀን: {closing}\n"
-            "🎯 የዕጣ ክልል: {tmin}–{tmax}\n"
-            "🟢 ቀሪ: <b>{remaining}</b>\n"
-            "🔴 የተያዙ: {taken}"
-        ),
         "select_ticket": "🎟️ <b>የዕጣ ቁጥር ይምረጡ</b>\n\nራስ-ሰር ወይም በእጅ መምረጥ ይችላሉ፦",
         "random_btn": "🎲 ራስ-ሰር ምረጥ",
         "manual_btn": "✍️ ቁጥር አስገባ",
@@ -93,18 +83,11 @@ T = {
         ),
         "paid_btn": "📤 ክፍያ ፈጸምኩ",
         "cancel_btn": "❌ ሰርዝ",
-        "ask_shot": "📸 <b>ደረጃ 1/3 — የክፍያ ማስረጃ</b>\n\nክፍያውን ከፈጸሙ በኋላ ግልጽ የሆነ ስክሪንሾት እንደ ፎቶ ይላኩ። ከዚያ ስምና ስልክ እንጠይቃለን።",
+        "ask_shot": "📸 <b>የክፍያ ማስረጃ</b>\n\nክፍያውን ከፈጸሙ በኋላ ግልጽ የሆነ ስክሪንሾት እንደ ፎቶ ይላኩ።",
         "bad_shot": "❌ እባክዎ ፎቶ (ስክሪንሾት) ብቻ ይላኩ።",
-        "ask_name": "👤 <b>ደረጃ 2/3 — ሙሉ ስም</b>\n\nበክፍያው ላይ ያለውን ሙሉ ስምዎን ይጻፉ፦",
-        "ask_phone": "📱 <b>ደረጃ 3/3 — ስልክ ቁጥር</b>\n\nለምሳሌ፦ 0912345678 ወይም +251912345678",
+        "ask_name": "👤 <b>ሙሉ ስም</b>\n\nበክፍያው ላይ ያለውን ሙሉ ስምዎን ይጻፉ፦",
+        "ask_phone": "📱 <b>ስልክ ቁጥር</b>\n\nለምሳሌ፦ 0912345678 ወይም +251912345678",
         "bad_phone": "❌ ስልክ ቁጥሩ ትክክል አይደለም። እንደ 0912345678 ያስገቡ፦",
-        "confirm": (
-            "📋 <b>ያረጋግጡ</b>\n\n"
-            "🚗 {car}\n🎟️ ዕጣ: <b>#{ticket}</b>\n"
-            "👤 {name}\n📱 {phone}"
-        ),
-        "confirm_ok": "✅ አረጋግጥ",
-        "confirm_no": "❌ ሰርዝ",
         "canceled": "❌ ጥያቄው ተሰርዟል። ዕጣው ነፃ ሆኗል።",
         "sent": "✅ <b>ተጠናቋል! ጥያቄዎ ተልኳል።</b>\n\n🧾 የክፍያ ማስረጃዎ ለአድሚን ተልኳል።\n⏳ አድሚን ክፍያውን እስኪያረጋግጥ ይጠብቁ።\n📋 ሁኔታውን ‘የእኔ ዕጣዎች’ ውስጥ ማየት ይችላሉ።",
         "approved": "🎉 <b>ዕጣዎ ተረጋግጧል!</b>\n\n🚗 {car}\n🎟️ ዕጣ: #{ticket}\n\nመልካም ዕድል! 🍀",
@@ -113,18 +96,16 @@ T = {
         "orders": "🎟️ <b>የእርስዎ ዕጣዎች</b>\n",
         "how_text": (
             "📖 <b>እንዴት እንደሚሰራ</b>\n\n"
-            "1️⃣ ‘ዕጣ ግዛ’ ይጫኑ።\n"
-            "2️⃣ መኪናውን እና ዋጋውን ያረጋግጡ።\n"
-            "3️⃣ ዕጣ ቁጥር ይምረጡ፤ ራስ-ሰር ወይም በእጅ።\n"
-            "4️⃣ በተጠቀሰው አካውንት ላይ ትክክለኛውን ዋጋ ይክፈሉ።\n"
-            "5️⃣ ‘ክፍያ ፈጸምኩ’ በመጫን ስክሪንሾት፣ ስምና ስልክ ይላኩ።\n"
-            "6️⃣ የእርስዎን ጥያቄ ያረጋግጡ፤ አድሚን ክፍያውን ያረጋግጣል።\n\n"
+            "1️⃣ ‘ፈጣን ግዢ’ ወይም ‘ቁጥር መምረጥ’ ይጫኑ።\n"
+            "2️⃣ የባንክ አካውንቱን በመጠቀም ይክፈሉ።\n"
+            "3️⃣ ‘ክፍያ ፈጸምኩ’ በመጫን ስክሪንሾት ይላኩ።\n"
+            "4️⃣ (ለመጀመሪያ ጊዜ ብቻ) ስምና ስልክ ይጻፉ።\n"
+            "5️⃣ አድሚን ክፍያውን ያረጋግጣል።\n\n"
             "💡 ማስታወሻ፦ ዕጣ ቁጥሩ በጊዜያዊነት ብቻ ይያዛል። በተጠቀሰው ጊዜ ውስጥ ክፍያ ይፈጽሙ።"
         ),
         "support_text": "☎️ <b>ድጋፍ</b>\n\n{ss}",
         "session_expired": "⏰ የእርስዎ ዕጣ ጊዜ አልፏል። እንደገና ይሞክሩ።",
         "back_to_cars": "🔙 ወደ መኪናዎች",
-        "choose_other": "🔄 ሌላ ቁጥር ምረጥ",
         "reminder": "⏰ <b>ማስታወሻ!</b>\n\nየዕጣ ቁጥር #{ticket} ጊዜው <b>1 ደቂቃ</b> ብቻ ቀርቷል! ክፍያውን አሁን ይፈጽሙ።",
     },
     "om": {
@@ -149,22 +130,13 @@ T = {
             "👇 Hirmaachuuf <b>«Carraa biti»</b> tuqi.\n"
             "🍀 Carraa gaarii!"
         ),
-        "buy": "🎟️ Carraa biti",
-        "quick_btn": "⚡ Saffisaa biti",       # ✅ NEW
+        "quick_btn": "⚡ Saffisaa biti (Ofumaan)",
+        "buy": "✍️ Lakkoofsa filadhu (Harkaan)",
         "my": "📋 Carraa koo",
         "how": "📖 Akkamitti hojjeta",
         "support": "☎️ Deeggarsa",
         "back": "🔙 Deebi'i",
         "home": "🏠 Jalqaba",
-        "pick_car": "🚗 <b>Konkolaataa filadhaa:</b>",
-        "car_info": (
-            "🚗 <b>{name}</b>\n{desc}\n\n"
-            "💰 Gatii: <b>{price} Birr</b>\n"
-            "📅 Guyyaa cufiinsaa: {closing}\n"
-            "🎯 Carraa: {tmin}–{tmax}\n"
-            "🟢 Hafe: <b>{remaining}</b>\n"
-            "🔴 Qabame: {taken}"
-        ),
         "select_ticket": "🎟️ <b>Lakkoofsa carraa filadhaa</b>\n\nOfumaan yookaan harkaan filachuu dandeessu:",
         "random_btn": "🎲 Ofumaan fili",
         "manual_btn": "✍️ Lakkoofsa galchi",
@@ -192,18 +164,11 @@ T = {
         ),
         "paid_btn": "📤 Kaffaltii raawwadhe",
         "cancel_btn": "❌ Haqi",
-        "ask_shot": "📸 <b>Tarkaanfii 1/3 — Ragaa kaffaltii</b>\n\nErga kaffaltee booda screenshot ifa ta'e akka suuraatti ergi. Itti aansinee maqaa fi bilbila si gaafanna.",
+        "ask_shot": "📸 <b>Ragaa kaffaltii</b>\n\nErga kaffaltee booda screenshot ifa ta'e akka suuraatti ergi.",
         "bad_shot": "❌ Maaloo suuraa qofa ergi.",
-        "ask_name": "👤 <b>Tarkaanfii 2/3 — Maqaa guutuu</b>\n\nMaqaa kaffaltii irratti mul'atu galchi:",
-        "ask_phone": "📱 <b>Tarkaanfii 3/3 — Lakkoofsa bilbilaa</b>\n\nFakkeenya: 0912345678 ykn +251912345678",
+        "ask_name": "👤 <b>Maqaa guutuu</b>\n\nMaqaa kaffaltii irratti mul'atu galchi:",
+        "ask_phone": "📱 <b>Lakkoofsa bilbilaa</b>\n\nFakkeenya: 0912345678 ykn +251912345678",
         "bad_phone": "❌ Bilbilli sirrii miti. Akka 0912345678:",
-        "confirm": (
-            "📋 <b>Mirkaneessi</b>\n\n"
-            "🚗 {car}\n🎟️ Carraa: <b>#{ticket}</b>\n"
-            "👤 {name}\n📱 {phone}"
-        ),
-        "confirm_ok": "✅ Mirkaneessi",
-        "confirm_no": "❌ Haqi",
         "canceled": "❌ Haqameera. Carraan bilisa ta'e.",
         "sent": "✅ <b>Xumurameera! Gaaffiin kee ergameera.</b>\n\n🧾 Ragaan kaffaltii adminitti ergameera.\n⏳ Admin kaffaltii hanga mirkaneessutti eegi.\n📋 Haala isaa ‘Carraa koo’ keessaa ilaaluu dandeessa.",
         "approved": "🎉 <b>Carraan keessan mirkanaa'e!</b>\n\n🚗 {car}\n🎟️ Carraa: #{ticket}\n\nCarraa gaarii! 🍀",
@@ -212,18 +177,16 @@ T = {
         "orders": "🎟️ <b>Carraa keessan</b>\n",
         "how_text": (
             "📖 <b>Akkamitti hojjeta?</b>\n\n"
-            "1️⃣ ‘Carraa biti’ tuqi.\n"
-            "2️⃣ Konkolaataa fi gatii isaa mirkaneessi.\n"
-            "3️⃣ Lakkoofsa carraa filadhu; ofumaan ykn harkaan.\n"
-            "4️⃣ Herrega irratti gatii sirrii kaffali.\n"
-            "5️⃣ ‘Kaffaltii raawwadhe’ tuqi; screenshot, maqaa fi bilbila ergi.\n"
-            "6️⃣ Admin kaffaltii mirkaneessa.\n\n"
+            "1️⃣ ‘Saffisaa biti’ ykn ‘Lakkoofsa filadhu’ tuqi.\n"
+            "2️⃣ Herrega kaffaltii fayyadamuun kaffali.\n"
+            "3️⃣ ‘Kaffaltii raawwadhe’ tuqiitii screenshot ergi.\n"
+            "4️⃣ (Yeroo jalqabaaf qofa) maqaa fi bilbila galchi.\n"
+            "5️⃣ Admin kaffaltii mirkaneessa.\n\n"
             "💡 Hubachiisa: Lakkoofsi yeroo muraasaaf qofa siif qabama; yeroo jedhame keessatti kaffali."
         ),
         "support_text": "☎️ <b>Deeggarsa</b>\n\n{ss}",
         "session_expired": "⏰ Yeroon carraa keessan dabreera.",
         "back_to_cars": "🔙 Konkolaataa",
-        "choose_other": "🔄 Lakkoofsa biraa fili",
         "reminder": "⏰ <b>Yaadachiisa!</b>\n\nCarraan #{ticket} yeroo <b>1 daqiiqaa</b> qofa hafe! Amma kaffaltii raawwadhu.",
     },
 }
@@ -243,10 +206,8 @@ def lang_kb():
 
 def main_menu(lang):
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(lang, "quick_btn"), callback_data="menu:quick")],
         [InlineKeyboardButton(text=t(lang, "buy"), callback_data="menu:buy")],
-        # ✅ NEW: Quick Buy — 1 ጠቅታ ዕጣ ይይዛል
-        [InlineKeyboardButton(text=t(lang, "quick_btn"),
-                              callback_data="menu:quick")],
         [InlineKeyboardButton(text=t(lang, "my"), callback_data="menu:my")],
         [
             InlineKeyboardButton(text=t(lang, "how"), callback_data="menu:how"),
@@ -254,56 +215,19 @@ def main_menu(lang):
         ],
     ])
 
-def cars_kb(lang, cars):
-    rows = []
-    for c in cars:
-        rows.append([InlineKeyboardButton(
-            text=f"🚗 {html.escape(str(c[1]))}  ·  {c[3]} ብር",
-            callback_data=f"car:{c[0]}"
-        )])
-    rows.append([InlineKeyboardButton(text=t(lang, "home"), callback_data="menu:home")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-def car_kb(lang, car_id, can_buy=True):
-    rows = []
-    if can_buy:
-        rows.append([InlineKeyboardButton(
-            text="🎟️ ዕጣ ምረጥ / Carraa fili",
-            callback_data=f"buy:{car_id}"
-        )])
-    rows.append([InlineKeyboardButton(
-        text=t(lang, "back_to_cars"), callback_data="menu:buy"
-    )])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
 def ticket_action_kb(lang, car_id):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text=t(lang, "random_btn"),
-                                 callback_data=f"tkt:rand:{car_id}"),
-            InlineKeyboardButton(text=t(lang, "manual_btn"),
-                                 callback_data=f"tkt:man:{car_id}"),
+            InlineKeyboardButton(text=t(lang, "random_btn"), callback_data=f"tkt:rand:{car_id}"),
+            InlineKeyboardButton(text=t(lang, "manual_btn"), callback_data=f"tkt:man:{car_id}"),
         ],
-        [InlineKeyboardButton(text=t(lang, "back"),
-                              callback_data=f"car:{car_id}")],
+        [InlineKeyboardButton(text=t(lang, "home"), callback_data="menu:home")],
     ])
 
 def pay_kb(lang, oid):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=t(lang, "paid_btn"),
-                              callback_data=f"pay:paid:{oid}")],
-        [InlineKeyboardButton(text=t(lang, "cancel_btn"),
-                              callback_data=f"pay:cancel:{oid}")],
-    ])
-
-def confirm_kb(lang, oid):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text=t(lang, "confirm_ok"),
-                                 callback_data=f"ok:{oid}"),
-            InlineKeyboardButton(text=t(lang, "confirm_no"),
-                                 callback_data=f"cancel:{oid}"),
-        ],
+        [InlineKeyboardButton(text=t(lang, "paid_btn"), callback_data=f"pay:paid:{oid}")],
+        [InlineKeyboardButton(text=t(lang, "cancel_btn"), callback_data=f"pay:cancel:{oid}")],
     ])
 
 def admin_kb(oid):
@@ -315,8 +239,7 @@ def admin_kb(oid):
 # ============================================================
 #  BOT SETUP
 # ============================================================
-bot = Bot(cfg.BOT_TOKEN,
-          default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = Bot(cfg.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 
 class BuyFSM(StatesGroup):
@@ -324,18 +247,15 @@ class BuyFSM(StatesGroup):
     shot = State()
     name = State()
     phone = State()
-    confirm = State()
 
 class RejectFSM(StatesGroup):
     reason = State()
 
 async def get_lang(uid):
     u = await db.get_user(uid)
-    return u[3] if u and u[3] else "am"
-
+    return u['lang'] if u and u['lang'] else "am"
 
 async def main_campaign(lang, user_name):
-    """Build the Telegram home screen from the first active car campaign."""
     cars = await db.list_cars(active_only=True)
     car = cars[0] if cars else None
     if not car:
@@ -344,59 +264,51 @@ async def main_campaign(lang, user_name):
             "om": "🚗 <b>Equb carraa konkolaataa</b>\n\nAmma carraan banaa hin jiru. Maaloo yeroo biraa deebi'aa.\n\n👤 Abbaa Equb: <b>Geetinet Fikadu Jiraata</b>",
         }
         return fallback.get(lang, fallback["am"]), None
-    stats = await db.car_stats(car[0])
-    desc = (car[2] or "የመኪናው ዝርዝር በቅርቡ ይጨመራል።") if lang == "am" else (car[2] or "Ibsi konkolaataa yeroo dhiyootti ni dabalama.")
+    stats = await db.car_stats(car['id'])
+    desc = (car['description'] or "የመኪናው ዝርዝር በቅርቡ ይጨመራል።") if lang == "am" else (car['description'] or "Ibsi konkolaataa yeroo dhiyootti ni dabalama.")
     desc = str(desc).strip()
-    if len(desc) > 500:
-        desc = desc[:497] + "..."
-    txt = t(lang, "menu", name=user_name, car_name=car[1], description=desc,
-            price=car[3], remaining=stats["remaining"])
-    image = car[8] if len(car) > 8 and car[8] else None
+    if len(desc) > 500: desc = desc[:497] + "..."
+    txt = t(lang, "menu", name=user_name, car_name=car['name'], description=desc,
+            price=car['price'], remaining=stats["remaining"])
+    image = car['image'] if car['image'] else None
     return txt, image
 
-# ---------- /start (with Car Photo) ----------
+# ---------- /start ----------
 @dp.message(CommandStart())
 async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
     u = await db.get_user(msg.from_user.id)
-    lang = u[3] if u and u[3] else "am"
-    await db.save_user(msg.from_user.id, msg.from_user.username or "",
-                       msg.from_user.full_name, lang)
-    if not (u and u[3]):
+    lang = u['lang'] if u and u['lang'] else "am"
+    await db.save_user(msg.from_user.id, msg.from_user.username or "", msg.from_user.full_name, lang)
+    
+    if not (u and u['lang']):
         await msg.answer(t("am", "welcome"), reply_markup=lang_kb())
         return
+        
     txt, image = await main_campaign(lang, msg.from_user.full_name)
     kb = main_menu(lang)
     try:
-        if image:
-            await msg.answer_photo(image, caption=txt, reply_markup=kb)
-        else:
-            await msg.answer(txt, reply_markup=kb)
+        if image: await msg.answer_photo(image, caption=txt, reply_markup=kb)
+        else: await msg.answer(txt, reply_markup=kb)
     except Exception as e:
-        log.warning("Could not show campaign photo on start: %s", e)
+        log.warning("Could not show campaign photo: %s", e)
         await msg.answer(txt, reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("lang:"))
 async def set_lang(cb: CallbackQuery):
     lang = cb.data.split(":")[1]
-    await db.save_user(cb.from_user.id, cb.from_user.username or "",
-                       cb.from_user.full_name, lang)
+    await db.save_user(cb.from_user.id, cb.from_user.username or "", cb.from_user.full_name, lang)
     txt, image = await main_campaign(lang, cb.from_user.full_name)
+    try: await cb.message.delete()
+    except Exception: pass
     try:
-        await cb.message.delete()
+        if image: await cb.message.answer_photo(image, caption=txt, reply_markup=main_menu(lang))
+        else: await cb.message.answer(txt, reply_markup=main_menu(lang))
     except Exception:
-        pass
-    try:
-        if image:
-            await cb.message.answer_photo(image, caption=txt, reply_markup=main_menu(lang))
-        else:
-            await cb.message.answer(txt, reply_markup=main_menu(lang))
-    except Exception as e:
-        log.warning("Could not show campaign photo after language selection: %s", e)
         await cb.message.answer(txt, reply_markup=main_menu(lang))
     await cb.answer()
 
-# ---------- Main Menu ----------
+# ---------- Menus ----------
 @dp.callback_query(F.data == "menu:home")
 async def menu_home(cb: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -404,34 +316,23 @@ async def menu_home(cb: CallbackQuery, state: FSMContext):
     txt, image = await main_campaign(lang, cb.from_user.full_name)
     kb = main_menu(lang)
     try:
-        if cb.message.photo and image:
-            await cb.message.edit_caption(caption=txt, reply_markup=kb)
+        if cb.message.photo and image: await cb.message.edit_caption(caption=txt, reply_markup=kb)
         elif cb.message.photo and not image:
             await cb.message.delete()
             await cb.message.answer(txt, reply_markup=kb)
-        else:
-            await cb.message.edit_text(txt, reply_markup=kb)
+        else: await cb.message.edit_text(txt, reply_markup=kb)
     except Exception:
         try:
-            if image:
-                await cb.message.answer_photo(image, caption=txt, reply_markup=kb)
-            else:
-                await cb.message.answer(txt, reply_markup=kb)
-        except Exception as e:
-            log.warning("Could not render home screen: %s", e)
+            if image: await cb.message.answer_photo(image, caption=txt, reply_markup=kb)
+            else: await cb.message.answer(txt, reply_markup=kb)
+        except Exception: pass
     await cb.answer()
 
 @dp.callback_query(F.data == "menu:how")
 async def menu_how(cb: CallbackQuery):
     lang = await get_lang(cb.from_user.id)
     try:
-        await cb.message.edit_text(
-            t(lang, "how_text"),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text=t(lang, "home"),
-                                     callback_data="menu:home")
-            ]])
-        )
+        await cb.message.edit_text(t(lang, "how_text"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t(lang, "home"), callback_data="menu:home")]]))
     except Exception:
         await cb.message.answer(t(lang, "how_text"))
     await cb.answer()
@@ -440,13 +341,7 @@ async def menu_how(cb: CallbackQuery):
 async def menu_support(cb: CallbackQuery):
     lang = await get_lang(cb.from_user.id)
     try:
-        await cb.message.edit_text(
-            t(lang, "support_text", ss=cfg.SUPPORT_USERNAME),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text=t(lang, "home"),
-                                     callback_data="menu:home")
-            ]])
-        )
+        await cb.message.edit_text(t(lang, "support_text", ss=cfg.SUPPORT_USERNAME), reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t(lang, "home"), callback_data="menu:home")]]))
     except Exception:
         await cb.message.answer(t(lang, "support_text", ss=cfg.SUPPORT_USERNAME))
     await cb.answer()
@@ -455,195 +350,122 @@ async def menu_support(cb: CallbackQuery):
 async def menu_my(cb: CallbackQuery):
     lang = await get_lang(cb.from_user.id)
     rows = await db.user_orders(cb.from_user.id)
-    if not rows:
-        txt = t(lang, "no_orders")
+    if not rows: txt = t(lang, "no_orders")
     else:
-        icons = {"pending": "⏳", "approved": "✅", "rejected": "❌",
-                 "held": "🔒", "blocked": "🚫"}
-        status_am = {"pending": "በማረጋገጥ ላይ", "approved": "ተጸድቋል",
-                     "rejected": "ተመልሷል", "held": "ጊዜያዊ ተይዟል",
-                     "blocked": "ታግዷል"}
-        status_om = {"pending": "Mirkaneessaa jira", "approved": "Mirkanaa'eera",
-                     "rejected": "Deebi'eera", "held": "Yeroo muraasaaf qabame",
-                     "blocked": "Dhaabbateera"}
+        icons = {"pending": "⏳", "approved": "✅", "rejected": "❌", "held": "🔒", "blocked": "🚫"}
+        status_am = {"pending": "በማረጋገጥ ላይ", "approved": "ተጸድቋል", "rejected": "ተመልሷል", "held": "ጊዜያዊ ተይዟል", "blocked": "ታግዷል"}
+        status_om = {"pending": "Mirkaneessaa jira", "approved": "Mirkanaa'eera", "rejected": "Deebi'eera", "held": "Yeroo muraasaaf qabame", "blocked": "Dhaabbateera"}
         statuses = status_om if lang == "om" else status_am
         lines = [t(lang, "orders"), ""]
-        for oid, tno, st, car in rows:
-            car_name = html.escape(str(car or "-"), quote=True)
-            lines.append(f"{icons.get(st,'•')} <b>#{tno}</b> · {car_name}\n   📌 {statuses.get(st, st)}")
+        for o in rows:
+            lines.append(f"{icons.get(o['status'],'•')} <b>#{o['ticket_no']}</b> · {html.escape(str(o['name'] or '-'))}\n   📌 {statuses.get(o['status'], o['status'])}")
         txt = "\n".join(lines)
     try:
-        await cb.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(text=t(lang, "home"),
-                                     callback_data="menu:home")
-            ]]))
+        await cb.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t(lang, "home"), callback_data="menu:home")]]))
     except Exception:
         await cb.message.answer(txt)
     await cb.answer()
 
-@dp.callback_query(F.data == "menu:buy")
-async def menu_buy(cb: CallbackQuery, state: FSMContext):
-    """Start ticket purchase immediately; no car-selection screen for customers."""
+# ---------- Buy Flow ----------
+@dp.callback_query(F.data == "menu:quick")
+async def menu_quick(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     lang = await get_lang(cb.from_user.id)
     cars = await db.list_cars(active_only=True)
     if not cars:
-        await cb.answer("📭 አሁን የሚገኝ ዕጣ የለም። እባክዎ ቆይተው ይሞክሩ።", show_alert=True)
-        return
+        await cb.answer("📭 አሁን የሚገኝ ዕጣ የለም።", show_alert=True); return
     car = cars[0]
-    car_id = car[0]
-    stats = await db.car_stats(car_id)
+    
+    stats = await db.car_stats(car['id'])
     if stats["remaining"] <= 0:
-        await cb.answer(t(lang, "no_available"), show_alert=True)
-        return
-    await state.update_data(car_id=car_id, car_name=car[1],
-                            tmin=car[4], tmax=car[5], price=car[3])
+        await cb.answer(t(lang, "no_available"), show_alert=True); return
+
+    taken = await db.taken_numbers(car['id'])
+    avail = [n for n in range(car['ticket_min'], car['ticket_max'] + 1) if n not in taken]
+    if not avail:
+        await cb.answer(t(lang, "no_available"), show_alert=True); return
+
+    n = random.choice(avail)
+    oid = await db.hold_ticket(car['id'], cb.from_user.id, n, cfg.HOLD_MINUTES)
+    if not oid:
+        await cb.answer("⚠️ እንደገና ይሞክሩ።", show_alert=True); return
+
+    await state.update_data(oid=oid, ticket=n, car_id=car['id'], car_name=car['name'], price=car['price'], tmin=car['ticket_min'], tmax=car['ticket_max'])
+    
+    # ሁለቱንም ጽሑፎች በአንድ ላይ ማጣመር (ቀላል ለማድረግ)
+    txt = t(lang, "ticket_held", n=n, mins=cfg.HOLD_MINUTES, price=car['price']) + "\n\n" + t(lang, "banks")
+    try: await cb.message.edit_text(txt, reply_markup=pay_kb(lang, oid))
+    except Exception: await cb.message.answer(txt, reply_markup=pay_kb(lang, oid))
+    await cb.answer("⚡ ዕጣው ተይዟል!")
+
+@dp.callback_query(F.data == "menu:buy")
+async def menu_buy(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    lang = await get_lang(cb.from_user.id)
+    cars = await db.list_cars(active_only=True)
+    if not cars:
+        await cb.answer("📭 አሁን የሚገኝ ዕጣ የለም።", show_alert=True); return
+    car = cars[0]
+    
+    stats = await db.car_stats(car['id'])
+    if stats["remaining"] <= 0:
+        await cb.answer(t(lang, "no_available"), show_alert=True); return
+        
+    await state.update_data(car_id=car['id'], car_name=car['name'], tmin=car['ticket_min'], tmax=car['ticket_max'], price=car['price'])
     text = (
         f"🎟️ <b>የዕጣ ግዢ</b>\n\n"
-        f"🚗 መኪና: <b>{html.escape(str(car[1]))}</b>\n"
-        f"💵 የአንድ ዕጣ ዋጋ: <b>{car[3]} ብር</b>\n"
+        f"🚗 መኪና: <b>{html.escape(str(car['name']))}</b>\n"
+        f"💵 የአንድ ዕጣ ዋጋ: <b>{car['price']} ብር</b>\n"
         f"🟢 የቀሩ ዕጣዎች: <b>{stats['remaining']}</b>\n\n"
         "👇 <b>የዕጣ ቁጥር ለመምረጥ ከታች አንዱን ይጫኑ።</b>\n"
         "🎲 ራስ-ሰር ምረጥ — ቦቱ ቁጥር ይመርጥልዎታል።\n"
         "✍️ ቁጥር አስገባ — የሚፈልጉትን ቁጥር ይጻፉ።"
     )
-    kb = ticket_action_kb(lang, car_id)
-    try:
-        await cb.message.edit_text(text, reply_markup=kb)
-    except Exception:
-        await cb.message.answer(text, reply_markup=kb)
+    kb = ticket_action_kb(lang, car['id'])
+    try: await cb.message.edit_text(text, reply_markup=kb)
+    except Exception: await cb.message.answer(text, reply_markup=kb)
     await cb.answer()
 
-# ✅ NEW: Quick Buy — 1 ጠቅታ ዕጣ ይይዛል
-@dp.callback_query(F.data == "menu:quick")
-async def menu_quick(cb: CallbackQuery, state: FSMContext):
-    """⚡ ራስ-ሰር ቁጥር ይይዝ + ወዲያውኑ ወደ ክፍያ ይሂድ።"""
-    await state.clear()
-    lang = await get_lang(cb.from_user.id)
-    cars = await db.list_cars(active_only=True)
-    if not cars:
-        await cb.answer("📭 አሁን የሚገኝ ዕጣ የለም።", show_alert=True)
-        return
-    car = cars[0]
-    car_id = car[0]
-
-    stats = await db.car_stats(car_id)
-    if stats["remaining"] <= 0:
-        await cb.answer(t(lang, "no_available"), show_alert=True)
-        return
-
-    taken = await db.taken_numbers(car_id)
-    avail = [n for n in range(car[4], car[5] + 1) if n not in taken]
-    if not avail:
-        await cb.answer(t(lang, "no_available"), show_alert=True)
-        return
-
-    n = random.choice(avail)
-    oid = await db.hold_ticket(car_id, cb.from_user.id, n, cfg.HOLD_MINUTES)
-    if not oid:
-        await cb.answer("⚠️ እንደገና ይሞክሩ።", show_alert=True)
-        return
-
-    await state.update_data(
-        oid=oid, ticket=n, car_id=car_id,
-        car_name=car[1], price=car[3],
-        tmin=car[4], tmax=car[5])
-
-    txt = t(lang, "ticket_held", n=n, mins=cfg.HOLD_MINUTES, price=car[3])
-    try:
-        await cb.message.edit_text(txt)
-    except Exception:
-        await cb.message.answer(txt)
-    await cb.message.answer(t(lang, "banks"), reply_markup=pay_kb(lang, oid))
-    await cb.answer("⚡ ዕጣው ተይዟል!")
-
-# ---------- Car Detail ----------
-@dp.callback_query(F.data.startswith("car:"))
-async def show_car(cb: CallbackQuery, state: FSMContext):
-    await state.clear()
-    lang = await get_lang(cb.from_user.id)
-    car_id = int(cb.data.split(":")[1])
-    car = await db.get_car(car_id)
-    if not car:
-        await cb.answer("❌ Car not found", show_alert=True); return
-    stats = await db.car_stats(car_id)
-    text = t(lang, "car_info",
-             name=car[1], desc=car[2] or "-", price=car[3],
-             closing=car[6] or "-", tmin=car[4], tmax=car[5],
-             remaining=stats["remaining"], taken=stats["taken"])
-    can_buy = stats["remaining"] > 0 and car[7]
-    try:
-        await cb.message.edit_text(text, reply_markup=car_kb(lang, car_id, can_buy))
-    except Exception:
-        await cb.message.answer(text, reply_markup=car_kb(lang, car_id, can_buy))
-    await cb.answer()
-
-# ---------- Buy: Ticket Selection ----------
-@dp.callback_query(F.data.startswith("buy:"))
-async def buy_start(cb: CallbackQuery, state: FSMContext):
-    await state.clear()
-    lang = await get_lang(cb.from_user.id)
-    car_id = int(cb.data.split(":")[1])
-    car = await db.get_car(car_id)
-    if not car or not car[7]:
-        await cb.answer("❌ መኪና አይገኝም", show_alert=True); return
-    await state.update_data(car_id=car_id, car_name=car[1],
-                            tmin=car[4], tmax=car[5], price=car[3])
-    try:
-        await cb.message.edit_text(t(lang, "select_ticket"),
-                                   reply_markup=ticket_action_kb(lang, car_id))
-    except Exception:
-        await cb.message.answer(t(lang, "select_ticket"),
-                                reply_markup=ticket_action_kb(lang, car_id))
-    await cb.answer()
-
-# ---------- Random pick ----------
 @dp.callback_query(F.data.startswith("tkt:rand:"))
 async def pick_random(cb: CallbackQuery, state: FSMContext):
     lang = await get_lang(cb.from_user.id)
     car_id = int(cb.data.split(":")[2])
     car = await db.get_car(car_id)
-    if not car:
-        await cb.answer("❌", show_alert=True); return
+    if not car: await cb.answer("❌", show_alert=True); return
+    
     taken = await db.taken_numbers(car_id)
-    total = car[5] - car[4] + 1
-    if len(taken) >= total:
-        await cb.answer(t(lang, "no_available"), show_alert=True); return
+    total = car['ticket_max'] - car['ticket_min'] + 1
+    if len(taken) >= total: await cb.answer(t(lang, "no_available"), show_alert=True); return
+    
     for _ in range(30):
-        n = random.randint(car[4], car[5])
-        if n not in taken:
-            break
+        n = random.randint(car['ticket_min'], car['ticket_max'])
+        if n not in taken: break
     else:
-        avail = [x for x in range(car[4], car[5]+1) if x not in taken]
-        if not avail:
-            await cb.answer(t(lang, "no_available"), show_alert=True); return
+        avail = [x for x in range(car['ticket_min'], car['ticket_max']+1) if x not in taken]
+        if not avail: await cb.answer(t(lang, "no_available"), show_alert=True); return
         n = random.choice(avail)
+        
     oid = await db.hold_ticket(car_id, cb.from_user.id, n, cfg.HOLD_MINUTES)
-    if not oid:
-        await cb.answer(t(lang, "taken_number", n=n), show_alert=True)
-        return
+    if not oid: await cb.answer(t(lang, "taken_number", n=n), show_alert=True); return
+    
     await state.update_data(oid=oid, ticket=n)
-    txt = t(lang, "ticket_held", n=n, mins=cfg.HOLD_MINUTES, price=car[3])
-    try:
-        await cb.message.edit_text(txt)
-    except Exception:
-        await cb.message.answer(txt)
-    await cb.message.answer(t(lang, "banks"), reply_markup=pay_kb(lang, oid))
+    
+    # ሁለቱንም ጽሑፎች በአንድ ላይ ማጣመር
+    txt = t(lang, "ticket_held", n=n, mins=cfg.HOLD_MINUTES, price=car['price']) + "\n\n" + t(lang, "banks")
+    try: await cb.message.edit_text(txt, reply_markup=pay_kb(lang, oid))
+    except Exception: await cb.message.answer(txt, reply_markup=pay_kb(lang, oid))
     await cb.answer("🎲")
 
-# ---------- Manual number ----------
 @dp.callback_query(F.data.startswith("tkt:man:"))
 async def manual_number(cb: CallbackQuery, state: FSMContext):
     lang = await get_lang(cb.from_user.id)
     car_id = int(cb.data.split(":")[2])
     car = await db.get_car(car_id)
-    if not car:
-        await cb.answer("❌", show_alert=True); return
-    await state.update_data(car_id=car_id, car_name=car[1],
-                            tmin=car[4], tmax=car[5], price=car[3])
+    if not car: await cb.answer("❌", show_alert=True); return
+    
+    await state.update_data(car_id=car_id, car_name=car['name'], tmin=car['ticket_min'], tmax=car['ticket_max'], price=car['price'])
     await state.set_state(BuyFSM.manual_number)
-    await cb.message.answer(t(lang, "ask_number", tmin=car[4], tmax=car[5]))
+    await cb.message.answer(t(lang, "ask_number", tmin=car['ticket_min'], tmax=car['ticket_max']))
     await cb.answer()
 
 @dp.message(BuyFSM.manual_number, F.text)
@@ -652,34 +474,34 @@ async def process_manual_number(msg: Message, state: FSMContext):
     d = await state.get_data()
     txt = msg.text.strip()
     if not txt.isdigit():
-        await msg.answer(t(lang, "invalid_number", tmin=d["tmin"], tmax=d["tmax"]))
-        return
+        await msg.answer(t(lang, "invalid_number", tmin=d["tmin"], tmax=d["tmax"])); return
+    
     n = int(txt)
     if not (d["tmin"] <= n <= d["tmax"]):
-        await msg.answer(t(lang, "invalid_number", tmin=d["tmin"], tmax=d["tmax"]))
-        return
+        await msg.answer(t(lang, "invalid_number", tmin=d["tmin"], tmax=d["tmax"])); return
+    
     if not await db.is_ticket_available(d["car_id"], n):
-        await msg.answer(
-            t(lang, "taken_number", n=n),
-            reply_markup=ticket_action_kb(lang, d["car_id"]))
-        await state.clear()
-        return
+        await msg.answer(t(lang, "taken_number", n=n), reply_markup=ticket_action_kb(lang, d["car_id"]))
+        await state.clear(); return
+        
     oid = await db.hold_ticket(d["car_id"], msg.from_user.id, n, cfg.HOLD_MINUTES)
     if not oid:
         await msg.answer(t(lang, "taken_number", n=n))
-        await state.clear()
-        return
+        await state.clear(); return
+        
     await state.update_data(oid=oid, ticket=n)
-    await msg.answer(t(lang, "ticket_held", n=n, mins=cfg.HOLD_MINUTES, price=d["price"]))
-    await msg.answer(t(lang, "banks"), reply_markup=pay_kb(lang, oid))
+    
+    # ሁለቱንም ጽሑፎች በአንድ ላይ ማጣመር
+    text = t(lang, "ticket_held", n=n, mins=cfg.HOLD_MINUTES, price=d["price"]) + "\n\n" + t(lang, "banks")
+    await msg.answer(text, reply_markup=pay_kb(lang, oid))
 
-# ---------- Payment: screenshot ----------
+# ---------- Payment & Auto-Submit ----------
 @dp.callback_query(F.data.startswith("pay:paid:"))
 async def pay_paid(cb: CallbackQuery, state: FSMContext):
     lang = await get_lang(cb.from_user.id)
     oid = int(cb.data.split(":")[2])
     o = await db.get_order(oid)
-    if not o or o[2] != cb.from_user.id or o[7] != "held":
+    if not o or o['user_id'] != cb.from_user.id or o['status'] != "held":
         await cb.answer(t(lang, "session_expired"), show_alert=True); return
     await state.update_data(oid=oid)
     await state.set_state(BuyFSM.shot)
@@ -691,33 +513,24 @@ async def pay_cancel(cb: CallbackQuery, state: FSMContext):
     lang = await get_lang(cb.from_user.id)
     oid = int(cb.data.split(":")[2])
     o = await db.get_order(oid)
-    if not o or o[2] != cb.from_user.id or o[7] != "held":
+    if not o or o['user_id'] != cb.from_user.id or o['status'] != "held":
         await cb.answer("Order not found or no longer held", show_alert=True); return
     await db.release_order(oid, user_id=cb.from_user.id)
     await state.clear()
-    try:
-        await cb.message.edit_text(t(lang, "canceled"),
-                                   reply_markup=main_menu(lang))
-    except Exception:
-        await cb.message.answer(t(lang, "canceled"))
+    try: await cb.message.edit_text(t(lang, "canceled"), reply_markup=main_menu(lang))
+    except Exception: await cb.message.answer(t(lang, "canceled"))
     await cb.answer()
 
-# 🔄 MODIFIED: ፕሮፋይል ካለ → ስም/ስልክ ሳይጠይቅ ወደ ማረጋገጫ ይዘልላል
 @dp.message(BuyFSM.shot, F.photo)
 async def f_shot(msg: Message, state: FSMContext):
     lang = await get_lang(msg.from_user.id)
     await state.update_data(shot=msg.photo[-1].file_id)
 
-    # 💾 ፕሮፋይል ካለ → ስም/ስልክ ሳይጠይቅ ወደ ማረጋገጫ
+    # 💾 ፕሮፋይል ካለ → ስም/ስልክ ሳይጠይቅ ወዲያውኑ ያስረክባል (Auto-Submit)
     saved_name, saved_phone = await db.get_profile(msg.from_user.id)
     if saved_name and saved_phone:
         await state.update_data(name=saved_name, phone=saved_phone)
-        d = await state.get_data()
-        await state.set_state(BuyFSM.confirm)
-        txt = t(lang, "confirm", car=d["car_name"], ticket=d["ticket"],
-                name=saved_name, phone=saved_phone)
-        await msg.answer_photo(d["shot"], caption=txt,
-                               reply_markup=confirm_kb(lang, d["oid"]))
+        await finalize_order(msg, state, lang)
         return
 
     await state.set_state(BuyFSM.name)
@@ -733,8 +546,7 @@ async def f_name(msg: Message, state: FSMContext):
     lang = await get_lang(msg.from_user.id)
     name = msg.text.strip()
     if len(name) < 2:
-        await msg.answer("❌ " + t(lang, "ask_name"))
-        return
+        await msg.answer("❌ " + t(lang, "ask_name")); return
     await state.update_data(name=name)
     await state.set_state(BuyFSM.phone)
     await msg.answer(t(lang, "ask_phone"))
@@ -745,84 +557,47 @@ async def f_phone(msg: Message, state: FSMContext):
     p = msg.text.strip().replace(" ", "").replace("-", "")
     if not re.match(r"^(\+2519|09|07)\d{8}$", p):
         await msg.answer(t(lang, "bad_phone")); return
+    
     await state.update_data(phone=p)
-    d = await state.get_data()
-    await state.set_state(BuyFSM.confirm)
-    txt = t(lang, "confirm", car=d["car_name"], ticket=d["ticket"],
-            name=d["name"], phone=p)
-    await msg.answer_photo(d["shot"], caption=txt,
-                           reply_markup=confirm_kb(lang, d["oid"]))
+    
+    # ስልክ እንደተረጋገጠ ወዲያውኑ ያስረክባል (Auto-Submit)
+    await finalize_order(msg, state, lang)
 
-# ---------- Confirm ----------
-@dp.callback_query(F.data.startswith("cancel:"))
-async def cancel_order(cb: CallbackQuery, state: FSMContext):
-    lang = await get_lang(cb.from_user.id)
-    oid = int(cb.data.split(":")[1])
-    o = await db.get_order(oid)
-    if not o or o[2] != cb.from_user.id or o[7] != "held":
-        await cb.answer("Order not found or no longer held", show_alert=True); return
-    await db.release_order(oid, user_id=cb.from_user.id)
-    await state.clear()
-    try:
-        await cb.message.edit_caption(caption=t(lang, "canceled"))
-    except Exception:
-        await cb.message.answer(t(lang, "canceled"))
-    home_text, home_image = await main_campaign(lang, cb.from_user.full_name)
-    if home_image:
-        try:
-            await cb.message.answer_photo(home_image, caption=home_text, reply_markup=main_menu(lang))
-        except Exception:
-            await cb.message.answer(home_text, reply_markup=main_menu(lang))
-    else:
-        await cb.message.answer(home_text, reply_markup=main_menu(lang))
-    await cb.answer()
-
-# 🔄 MODIFIED: ፕሮፋይል ያስቀምጣል (አዲስ ግዢ ፈጣን እንዲሆን)
-@dp.callback_query(F.data.startswith("ok:"))
-async def confirm_order(cb: CallbackQuery, state: FSMContext):
-    lang = await get_lang(cb.from_user.id)
-    oid = int(cb.data.split(":")[1])
+async def finalize_order(event, state: FSMContext, lang: str):
+    """ያለ ማረጋገጫ ቁልፍ በቀጥታ ለአድሚን የሚልክ ፈንክሽን"""
     d = await state.get_data()
-    o = await db.get_order(oid)
-    if not o or o[2] != cb.from_user.id or o[7] != "held" or d.get("oid") != oid or not d.get("shot"):
-        await cb.answer(t(lang, "session_expired"), show_alert=True); return
-    changed = await db.confirm_hold(oid, d.get("name", ""), d.get("phone", ""), d.get("shot"), user_id=cb.from_user.id)
+    
+    changed = await db.confirm_hold(d["oid"], d.get("name", ""), d.get("phone", ""), d.get("shot"), user_id=event.from_user.id)
     if not changed:
-        await cb.answer(t(lang, "session_expired"), show_alert=True); return
+        await event.answer(t(lang, "session_expired"))
+        await state.clear(); return
 
-    # 💾 ፕሮፋይል አስቀምጥ — ቀጣይ ግዢዎች ፈጣን ይሆናሉ
-    try:
-        await db.save_profile(cb.from_user.id, d.get("name", ""), d.get("phone", ""))
-    except Exception as e:
-        log.warning("Could not save profile: %s", e)
-
+    # ፕሮፋይል አስቀምጥ (ለቀጣይ ጊዜ)
+    await db.save_profile(event.from_user.id, d.get("name", ""), d.get("phone", ""))
     await state.clear()
-    try:
-        await cb.message.edit_caption(caption=t(lang, "sent"))
-    except Exception:
-        await cb.message.answer(t(lang, "sent"))
-    home_text, home_image = await main_campaign(lang, cb.from_user.full_name)
+
+    # ለተጠቃሚው መልእክት
+    await event.answer(t(lang, "sent"))
+    home_text, home_image = await main_campaign(lang, event.from_user.full_name)
     if home_image:
-        try:
-            await cb.message.answer_photo(home_image, caption=home_text, reply_markup=main_menu(lang))
-        except Exception:
-            await cb.message.answer(home_text, reply_markup=main_menu(lang))
+        try: await event.answer_photo(home_image, caption=home_text, reply_markup=main_menu(lang))
+        except Exception: await event.answer(home_text, reply_markup=main_menu(lang))
     else:
-        await cb.message.answer(home_text, reply_markup=main_menu(lang))
+        await event.answer(home_text, reply_markup=main_menu(lang))
+
+    # ለአድሚን መልእክት
     admin_text = (
-        f"🔔 <b>አዲስ ጥያቄ #{oid}</b>\n\n"
-        f"🚗 {html.escape(str(d['car_name']), quote=True)}\n"
-        f"👤 {html.escape(str(d['name']), quote=True)}\n"
-        f"📱 {html.escape(str(d['phone']), quote=True)}\n"
+        f"🔔 <b>አዲስ ጥያቄ #{d['oid']}</b>\n\n"
+        f"🚗 {html.escape(str(d['car_name']))}\n"
+        f"👤 {html.escape(str(d['name']))}\n"
+        f"📱 {html.escape(str(d['phone']))}\n"
         f"🎟️ ዕጣ: <b>#{d['ticket']}</b>\n"
-        f"💬 @{cb.from_user.username or '-'} — <code>{cb.from_user.id}</code>"
+        f"💬 @{event.from_user.username or '-'} — <code>{event.from_user.id}</code>"
     )
     try:
-        await bot.send_photo(cfg.ADMIN_GROUP_ID, photo=d["shot"],
-                             caption=admin_text, reply_markup=admin_kb(oid))
+        await bot.send_photo(cfg.ADMIN_GROUP_ID, photo=d["shot"], caption=admin_text, reply_markup=admin_kb(d['oid']))
     except Exception as e:
         log.error(f"Admin send failed: {e}")
-    await cb.answer()
 
 # ---------- Telegram Admin ----------
 @dp.callback_query(F.data.startswith("adm:ok:"))
@@ -833,18 +608,11 @@ async def adm_ok(cb: CallbackQuery):
     o = await db.get_order(oid)
     if not o: await cb.answer("Not found"); return
     changed = await db.update_order_status(oid, "approved", expected_status="pending", actor=f"telegram:{cb.from_user.id}")
-    if not changed:
-        await cb.answer("Already processed", show_alert=True); return
-    car = await db.get_car(o[1])
-    try:
-        await bot.send_message(o[2], t("am", "approved",
-                             car=car[1] if car else "-", ticket=o[3]))
-    except Exception as e:
-        log.error(e)
-    try:
-        await cb.message.edit_caption(
-            caption=(cb.message.caption or "") + "\n\n✅ <b>ጸድቋል</b>",
-            reply_markup=None)
+    if not changed: await cb.answer("Already processed", show_alert=True); return
+    car = await db.get_car(o['car_id'])
+    try: await bot.send_message(o['user_id'], t("am", "approved", car=car['name'] if car else "-", ticket=o['ticket_no']))
+    except Exception as e: log.error(e)
+    try: await cb.message.edit_caption(caption=(cb.message.caption or "") + "\n\n✅ <b>ጸድቋል</b>", reply_markup=None)
     except Exception: pass
     await cb.answer("✅ Approved")
 
@@ -863,11 +631,10 @@ async def adm_rej_reason(msg: Message, state: FSMContext):
     d = await state.get_data()
     oid = d.get("rej_oid"); await state.clear()
     o = await db.get_order(oid)
-    if not o or o[7] != "pending": await msg.answer("Order not found or already processed"); return
+    if not o or o['status'] != "pending": await msg.answer("Order not found or already processed"); return
     changed = await db.update_order_status(oid, "rejected", msg.text.strip(), expected_status="pending", actor=f"telegram:{msg.from_user.id}")
     if not changed: await msg.answer("Order already processed"); return
-    try:
-        await bot.send_message(o[2], t("am", "rejected", reason=msg.text.strip()))
+    try: await bot.send_message(o['user_id'], t("am", "rejected", reason=msg.text.strip()))
     except Exception as e: log.error(e)
     await msg.answer(f"❌ Order #{oid} ተመልሷል።")
 
@@ -879,14 +646,13 @@ async def reminder_task():
         try:
             await asyncio.sleep(30)
             expiring = await db.get_expiring_holds()
-            for oid, uid, ticket_no, _ in expiring:
-                lang = await get_lang(uid)
+            for o in expiring:
+                lang = await get_lang(o['user_id'])
                 try:
-                    await bot.send_message(uid, t(lang, "reminder", ticket=ticket_no))
-                    await db.mark_reminder_sent(oid)
-                except Exception as e:
-                    log.error(f"Reminder failed for {uid}: {e}")
-                    await db.mark_reminder_sent(oid)
+                    await bot.send_message(o['user_id'], t(lang, "reminder", ticket=o['ticket_no']))
+                    await db.mark_reminder_sent(o['id'])
+                except Exception:
+                    await db.mark_reminder_sent(o['id'])
         except Exception as e:
             log.error(f"Reminder task error: {e}")
 
@@ -895,31 +661,26 @@ async def reminder_task():
 # ============================================================
 def make_token():
     ts = str(int(time.time()))
-    sig = hmac.new(cfg.SECRET_KEY.encode(), ts.encode(),
-                   hashlib.sha256).hexdigest()
+    sig = hmac.new(cfg.SECRET_KEY.encode(), ts.encode(), hashlib.sha256).hexdigest()
     return f"{ts}.{sig}"
 
 def verify_token(tok):
     try:
         ts, sig = tok.split(".")
-        exp = hmac.new(cfg.SECRET_KEY.encode(), ts.encode(),
-                       hashlib.sha256).hexdigest()
+        exp = hmac.new(cfg.SECRET_KEY.encode(), ts.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, exp): return False
         age = time.time() - int(ts)
         if age < -30 or age > cfg.SESSION_TTL_SECONDS: return False
         return True
-    except Exception:
-        return False
+    except Exception: return False
 
-def authed(req):
-    return verify_token(req.cookies.get("auth", ""))
+def authed(req): return verify_token(req.cookies.get("auth", ""))
 
 def auth_mw():
     @web.middleware
     async def mw(req, handler):
         if req.path.startswith("/admin") and req.path not in ("/admin/login",):
-            if not authed(req):
-                raise web.HTTPFound("/admin/login")
+            if not authed(req): raise web.HTTPFound("/admin/login")
         return await handler(req)
     return mw
 
@@ -933,75 +694,44 @@ a{color:#1d9bf0;text-decoration:none}
 display:flex;justify-content:space-between;align-items:center;
 position:sticky;top:0;z-index:100;backdrop-filter:blur(20px)}
 .nav h1{font-size:16px;color:#1d9bf0;font-weight:700}
-.nav .badge-live{background:#003d24;color:#00ba7c;padding:3px 10px;
-border-radius:10px;font-size:10px;font-weight:700}
+.nav .badge-live{background:#003d24;color:#00ba7c;padding:3px 10px;border-radius:10px;font-size:10px;font-weight:700}
 .wrap{max-width:1200px;margin:16px auto;padding:0 12px}
 .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
 @media(min-width:500px){.grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}}
-.stat{background:#11161d;border:1px solid #232a33;border-radius:14px;padding:16px;
-position:relative;overflow:hidden}
-.stat::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;
-background:linear-gradient(90deg,#1d9bf0,#00ba7c)}
-.stat .lbl{font-size:10px;color:#71767b;text-transform:uppercase;
-letter-spacing:.8px;font-weight:700}
+.stat{background:#11161d;border:1px solid #232a33;border-radius:14px;padding:16px;position:relative;overflow:hidden}
+.stat::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#1d9bf0,#00ba7c)}
+.stat .lbl{font-size:10px;color:#71767b;text-transform:uppercase;letter-spacing:.8px;font-weight:700}
 .stat .val{font-size:26px;font-weight:800;margin-top:6px;color:#e7e9ea}
-.stat.blue .val{color:#1d9bf0}
-.stat.green .val{color:#00ba7c}
-.stat.yellow .val{color:#ffd400}
-.stat.red .val{color:#f4212e}
-.card{background:#11161d;border:1px solid #232a33;border-radius:14px;
-padding:18px;margin-bottom:14px}
-.card h2{font-size:15px;margin-bottom:14px;color:#e7e9ea;font-weight:700;
-display:flex;align-items:center;gap:8px}
+.stat.blue .val{color:#1d9bf0}.stat.green .val{color:#00ba7c}.stat.yellow .val{color:#ffd400}.stat.red .val{color:#f4212e}
+.card{background:#11161d;border:1px solid #232a33;border-radius:14px;padding:18px;margin-bottom:14px}
+.card h2{font-size:15px;margin-bottom:14px;color:#e7e9ea;font-weight:700;display:flex;align-items:center;gap:8px}
 table{width:100%;border-collapse:collapse}
-th,td{padding:12px 8px;text-align:left;font-size:13px;
-border-bottom:1px solid #232a33}
-th{color:#71767b;font-weight:700;font-size:10px;text-transform:uppercase;
-letter-spacing:.5px}
+th,td{padding:12px 8px;text-align:left;font-size:13px;border-bottom:1px solid #232a33}
+th{color:#71767b;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
 tr:last-child td{border-bottom:none}
-.btn{display:inline-block;padding:12px 20px;border-radius:26px;border:none;
-font-size:14px;font-weight:700;cursor:pointer;background:#1d9bf0;color:#fff;
-text-align:center;line-height:1.2;touch-action:manipulation;
-transition:transform .1s}
+.btn{display:inline-block;padding:12px 20px;border-radius:26px;border:none;font-size:14px;font-weight:700;cursor:pointer;background:#1d9bf0;color:#fff;text-align:center;line-height:1.2;touch-action:manipulation;transition:transform .1s}
 .btn:active{transform:scale(.97)}
-.btn.r{background:#f4212e}.btn.g{background:#00ba7c}
-.btn.y{background:#ffd400;color:#000}
-.btn.s{padding:8px 14px;font-size:13px}
-.btn.full{display:block;width:100%}
-input,textarea,select{width:100%;padding:13px;border-radius:11px;
-background:#0a0e14;border:1px solid #232a33;color:#e7e9ea;font-size:15px;
-font-family:inherit;margin-bottom:12px;-webkit-appearance:none}
+.btn.r{background:#f4212e}.btn.g{background:#00ba7c}.btn.y{background:#ffd400;color:#000}
+.btn.s{padding:8px 14px;font-size:13px}.btn.full{display:block;width:100%}
+input,textarea,select{width:100%;padding:13px;border-radius:11px;background:#0a0e14;border:1px solid #232a33;color:#e7e9ea;font-size:15px;font-family:inherit;margin-bottom:12px;-webkit-appearance:none}
 input:focus,textarea:focus,select:focus{outline:none;border-color:#1d9bf0}
-label{display:block;font-size:11px;color:#71767b;margin-bottom:6px;
-font-weight:700;text-transform:uppercase;letter-spacing:.5px}
-.badge{padding:5px 11px;border-radius:14px;font-size:10px;font-weight:700;
-display:inline-block;text-transform:uppercase;letter-spacing:.5px}
-.badge.pending{background:#5c4a00;color:#ffd400}
-.badge.approved{background:#003d24;color:#00ba7c}
-.badge.rejected{background:#3d0008;color:#f4212e}
-.badge.held{background:#1a3a5c;color:#1d9bf0}
+label{display:block;font-size:11px;color:#71767b;margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.badge{padding:5px 11px;border-radius:14px;font-size:10px;font-weight:700;display:inline-block;text-transform:uppercase;letter-spacing:.5px}
+.badge.pending{background:#5c4a00;color:#ffd400}.badge.approved{background:#003d24;color:#00ba7c}
+.badge.rejected{background:#3d0008;color:#f4212e}.badge.held{background:#1a3a5c;color:#1d9bf0}
 .badge.blocked{background:#2f3336;color:#a0a0a0}
-.login{max-width:400px;margin:60px auto;background:#11161d;padding:32px;
-border-radius:20px;border:1px solid #232a33;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.login{max-width:400px;margin:60px auto;background:#11161d;padding:32px;border-radius:20px;border:1px solid #232a33;box-shadow:0 20px 60px rgba(0,0,0,.5)}
 .login h1{text-align:center;margin-bottom:24px;color:#1d9bf0;font-size:22px}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .form-grid .full{grid-column:1/-1}
 @media(max-width:500px){.form-grid{grid-template-columns:1fr}}
-.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:#11161d;
-border-top:1px solid #232a33;display:flex;justify-content:space-around;
-padding:8px 0;z-index:100;backdrop-filter:blur(20px);
-padding-bottom:max(8px,env(safe-area-inset-bottom))}
-.bottom-nav a{flex:1;text-align:center;padding:6px;color:#71767b;
-font-size:10px;font-weight:700;display:flex;flex-direction:column;
-align-items:center;gap:3px;text-transform:uppercase;letter-spacing:.5px}
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:#11161d;border-top:1px solid #232a33;display:flex;justify-content:space-around;padding:8px 0;z-index:100;backdrop-filter:blur(20px);padding-bottom:max(8px,env(safe-area-inset-bottom))}
+.bottom-nav a{flex:1;text-align:center;padding:6px;color:#71767b;font-size:10px;font-weight:700;display:flex;flex-direction:column;align-items:center;gap:3px;text-transform:uppercase;letter-spacing:.5px}
 .bottom-nav a.active{color:#1d9bf0}
 .bottom-nav a .ic{font-size:22px;line-height:1}
-.order-card{background:#0f1419;border:1px solid #232a33;border-radius:12px;
-padding:14px;margin-bottom:12px}
-.order-card .row{display:flex;justify-content:space-between;
-align-items:center;margin-bottom:8px;font-size:13px;gap:10px}
-.order-card .row .k{color:#71767b;font-size:10px;text-transform:uppercase;
-font-weight:700;letter-spacing:.5px;white-space:nowrap}
+.order-card{background:#0f1419;border:1px solid #232a33;border-radius:12px;padding:14px;margin-bottom:12px}
+.order-card .row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:13px;gap:10px}
+.order-card .row .k{color:#71767b;font-size:10px;text-transform:uppercase;font-weight:700;letter-spacing:.5px;white-space:nowrap}
 .order-card .actions{display:flex;gap:8px;margin-top:12px}
 .order-card .actions .btn{flex:1;padding:12px}
 .empty{text-align:center;color:#71767b;padding:50px 20px;font-size:14px}
@@ -1017,10 +747,7 @@ def layout(title, body, active=""):
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="theme-color" content="#11161d">
 <title>{title}</title>{CSS}</head><body>
-<div class="nav">
-  <h1>🚗 የመኪና ዕጣ — አድሚን</h1>
-  <span class="badge-live">● LIVE</span>
-</div>
+<div class="nav"><h1>🚗 የመኪና ዕጣ — አድሚን</h1><span class="badge-live">● LIVE</span></div>
 <div class="wrap">{body}</div>
 <div class="bottom-nav">
   {link('/admin','<span class="ic">📊</span>ዋና','dash')}
@@ -1030,54 +757,40 @@ def layout(title, body, active=""):
   {link('/admin/broadcast','<span class="ic">📢</span>መልዕክት','broadcast')}
   {link('/admin/audit','<span class="ic">🧾</span>ታሪክ','audit')}
   {link('/admin/logout','<span class="ic">🚪</span>ውጣ','')}
-</div>
-</body></html>"""
+</div></body></html>"""
 
 # ---------- Auth ----------
 _LOGIN_FAILURES = {}
-
 def _login_locked(ip):
     count, since = _LOGIN_FAILURES.get(ip, (0, 0))
     if time.time() - since >= cfg.LOGIN_LOCK_SECONDS:
-        _LOGIN_FAILURES.pop(ip, None)
-        return False
+        _LOGIN_FAILURES.pop(ip, None); return False
     return count >= cfg.LOGIN_MAX_ATTEMPTS
 
 async def login_get(req):
     err = req.query.get("err", "")
-    msg = ('<p style="color:#f4212e;text-align:center;margin-bottom:14px;'
-           'font-weight:600">❌ የተሳሳተ የይለፍ ቃል</p>') if err else ""
-    return web.Response(text=f"""<!doctype html><html><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Login</title>{CSS}</head><body>
+    msg = ('<p style="color:#f4212e;text-align:center;margin-bottom:14px;font-weight:600">❌ የተሳሳተ የይለፍ ቃል</p>') if err else ""
+    return web.Response(text=f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login</title>{CSS}</head><body>
 <div class="login"><h1>🚗 Admin Login</h1>{msg}
-<form method="POST" action="/admin/login">
-<label>የአድሚን የይለፍ ቃል</label>
-<input type="password" name="pw" required autofocus>
-<button class="btn full">🔓 ግባ</button>
-</form></div></body></html>""", content_type="text/html")
+<form method="POST" action="/admin/login"><label>የአድሚን የይለፍ ቃል</label><input type="password" name="pw" required autofocus><button class="btn full">🔓 ግባ</button></form>
+</div></body></html>""", content_type="text/html")
 
 async def login_post(req):
     ip = req.remote or "unknown"
-    if _login_locked(ip):
-        raise web.HTTPFound("/admin/login?err=locked")
+    if _login_locked(ip): raise web.HTTPFound("/admin/login?err=locked")
     data = await req.post()
     supplied = str(data.get("pw", ""))
     if hmac.compare_digest(supplied, cfg.ADMIN_PASSWORD):
         _LOGIN_FAILURES.pop(ip, None)
         r = web.HTTPFound("/admin")
-        r.set_cookie("auth", make_token(), max_age=cfg.SESSION_TTL_SECONDS,
-                     httponly=True, secure=cfg.COOKIE_SECURE, samesite="Lax", path="/")
+        r.set_cookie("auth", make_token(), max_age=cfg.SESSION_TTL_SECONDS, httponly=True, secure=cfg.COOKIE_SECURE, samesite="Lax", path="/")
         raise r
     count, since = _LOGIN_FAILURES.get(ip, (0, time.time()))
     _LOGIN_FAILURES[ip] = (count + 1, since)
     raise web.HTTPFound("/admin/login?err=1")
 
 async def logout(req):
-    r = web.HTTPFound("/admin/login")
-    r.del_cookie("auth", path="/")
-    raise r
+    r = web.HTTPFound("/admin/login"); r.del_cookie("auth", path="/"); raise r
 
 # ---------- Dashboard ----------
 async def dash(req):
@@ -1085,108 +798,63 @@ async def dash(req):
     cars = await db.list_cars(active_only=False)
     car_rows = ""
     for c in cars:
-        s = await db.car_stats(c[0])
-        car_rows += f"""<tr>
-        <td>#{c[0]}</td><td>{html.escape(str(c[1]), quote=True)}</td>
-        <td>{s['approved']}✅ {s['pending']}⏳ {s['held']}🔒 {s['blocked']}🚫</td>
-        <td><b style="color:#00ba7c">{s['remaining']}</b></td></tr>"""
+        s = await db.car_stats(c['id'])
+        car_rows += f"<tr><td>#{c['id']}</td><td>{html.escape(str(c['name']))}</td><td>{s['approved']}✅ {s['pending']}⏳ {s['held']}🔒 {s['blocked']}🚫</td><td><b style='color:#00ba7c'>{s['remaining']}</b></td></tr>"
     body = f"""
     <div class="grid">
-      <div class="stat blue"><div class="lbl">ተጠቃሚዎች</div>
-      <div class="val">{g['users']}</div></div>
-      <div class="stat green"><div class="lbl">ንቁ መኪናዎች</div>
-      <div class="val">{g['cars']}</div></div>
-      <div class="stat yellow"><div class="lbl">በማረጋገጥ ላይ</div>
-      <div class="val">{g['pending']}</div></div>
-      <div class="stat blue"><div class="lbl">የጸደቁ</div>
-      <div class="val">{g['approved']}</div></div>
-      <div class="stat blue"><div class="lbl">ጊዜያዊ የተያዙ</div>
-      <div class="val">{g['held']}</div></div>
-      <div class="stat red"><div class="lbl">የታገዱ</div>
-      <div class="val">{g['blocked']}</div></div>
-      <div class="stat green"><div class="lbl">የጸደቁ ዋጋ (ብር)</div>
-      <div class="val">{g.get('approved_revenue', 0):,}</div></div>
+      <div class="stat blue"><div class="lbl">ተጠቃሚዎች</div><div class="val">{g['users']}</div></div>
+      <div class="stat green"><div class="lbl">ንቁ መኪናዎች</div><div class="val">{g['cars']}</div></div>
+      <div class="stat yellow"><div class="lbl">በማረጋገጥ ላይ</div><div class="val">{g['pending']}</div></div>
+      <div class="stat blue"><div class="lbl">የጸደቁ</div><div class="val">{g['approved']}</div></div>
+      <div class="stat blue"><div class="lbl">ጊዜያዊ የተያዙ</div><div class="val">{g['held']}</div></div>
+      <div class="stat red"><div class="lbl">የታገዱ</div><div class="val">{g['blocked']}</div></div>
+      <div class="stat green"><div class="lbl">የጸደቁ ዋጋ (ብር)</div><div class="val">{g.get('approved_revenue', 0):,}</div></div>
     </div>
     <div class="card"><h2>🚗 የመኪናዎች ማጠቃለያ</h2>
-    <table><thead><tr><th>ID</th><th>Name</th>
-    <th>Status</th><th>Left</th></tr></thead>
+    <table><thead><tr><th>ID</th><th>Name</th><th>Status</th><th>Left</th></tr></thead>
     <tbody>{car_rows or '<tr><td colspan="4" style="text-align:center;color:#71767b;padding:20px">No cars</td></tr>'}</tbody></table></div>
     <div class="card">
-      <a href="/admin/orders?status=pending" class="btn full y"
-      style="margin-bottom:8px">⏳ የሚጠባበቁ ጥያቄዎችን ክፈት</a>
+      <a href="/admin/orders?status=pending" class="btn full y" style="margin-bottom:8px">⏳ የሚጠባበቁ ጥያቄዎችን ክፈት</a>
       <a href="/admin/broadcast" class="btn full">📢 ለተጠቃሚዎች መልዕክት ላክ</a>
     </div>"""
-    return web.Response(text=layout("Dashboard", body, "dash"),
-                        content_type="text/html")
+    return web.Response(text=layout("Dashboard", body, "dash"), content_type="text/html")
 
 # ---------- Cars ----------
 async def cars_list(req):
     cars = await db.list_cars(active_only=False)
     cards = ""
     for c in cars:
-        s = await db.car_stats(c[0])
-        img = c[8] if len(c) > 8 and c[8] else ""
-        img_html = f'<img src="{html.escape(str(img), quote=True)}" style="width:60px;height:60px;border-radius:8px;object-fit:cover">' if img else '🚗'
+        s = await db.car_stats(c['id'])
+        img = c['image'] or ""
+        img_html = f'<img src="{html.escape(str(img))}" style="width:60px;height:60px;border-radius:8px;object-fit:cover">' if img else '🚗'
         cards += f"""<div class="order-card">
-          <div class="row">
-            <span>{img_html} <b>#{c[0]}</b> {html.escape(str(c[1]), quote=True)}</span>
-            <span>{'🟢' if c[7] else '🔴'}</span>
-          </div>
-          <div class="row"><span class="k">Price</span>
-          <span><b>{c[3]} ብር</b></span></div>
-          <div class="row"><span class="k">Tickets</span>
-          <span>{c[4]} – {c[5]}</span></div>
-          <div class="row"><span class="k">Status</span>
-          <span>✅{s['approved']} ⏳{s['pending']} 🔒{s['held']} 🚫{s['blocked']}</span></div>
-          <div class="row"><span class="k">Remaining</span>
-          <span><b style="color:#00ba7c">{s['remaining']}/{s['total']}</b></span></div>
+          <div class="row"><span>{img_html} <b>#{c['id']}</b> {html.escape(str(c['name']))}</span><span>{'🟢' if c['active'] else '🔴'}</span></div>
+          <div class="row"><span class="k">Price</span><span><b>{c['price']} ብር</b></span></div>
+          <div class="row"><span class="k">Tickets</span><span>{c['ticket_min']} – {c['ticket_max']}</span></div>
+          <div class="row"><span class="k">Status</span><span>✅{s['approved']} ⏳{s['pending']} 🔒{s['held']} 🚫{s['blocked']}</span></div>
+          <div class="row"><span class="k">Remaining</span><span><b style="color:#00ba7c">{s['remaining']}/{s['total']}</b></span></div>
           <div class="actions">
-            <a href="/admin/cars/{c[0]}" class="btn full s">✏️ Edit</a>
-            <form method="POST" action="/admin/cars/{c[0]}/del" style="flex:1"
-             onsubmit="return confirm('Delete car #{c[0]}?')">
-              <button class="btn r full s">🗑️</button>
-            </form>
-          </div>
-        </div>"""
+            <a href="/admin/cars/{c['id']}" class="btn full s">✏️ Edit</a>
+            <form method="POST" action="/admin/cars/{c['id']}/del" style="flex:1" onsubmit="return confirm('Delete car #{c['id']}?')"><button class="btn r full s">🗑️</button></form>
+          </div></div>"""
     body = f"""
-    <div class="card">
-      <h2>➕ አዲስ መኪና</h2>
+    <div class="card"><h2>➕ አዲስ መኪና</h2>
       <form method="POST" action="/admin/cars/add">
-        <label>የመኪና ስም</label>
-        <input name="name" required placeholder="Toyota Corolla 2020">
-        <label>ዋጋ (ብር)</label>
-        <input name="price" type="number" value="500" required>
-        <div class="form-grid">
-          <div><label>ዕጣ ከ</label>
-          <input name="tmin" type="number" value="1"></div>
-          <div><label>ዕጣ እስከ</label>
-          <input name="tmax" type="number" value="4000"></div>
-        </div>
-        <label>የመዝጊያ ቀን</label>
-        <input name="closing" placeholder="30/12/2026">
-        <label>ፎቶ URL (አማራጭ)</label>
-        <input name="image" placeholder="https://example.com/car.jpg">
-        <label>መግለጫ</label>
-        <textarea name="desc" rows="2"></textarea>
+        <label>የመኪና ስም</label><input name="name" required placeholder="Toyota Corolla 2020">
+        <label>ዋጋ (ብር)</label><input name="price" type="number" value="500" required>
+        <div class="form-grid"><div><label>ዕጣ ከ</label><input name="tmin" type="number" value="1"></div><div><label>ዕጣ እስከ</label><input name="tmax" type="number" value="4000"></div></div>
+        <label>የመዝጊያ ቀን</label><input name="closing" placeholder="30/12/2026">
+        <label>ፎቶ URL (አማራጭ)</label><input name="image" placeholder="https://example.com/car.jpg">
+        <label>መግለጫ</label><textarea name="desc" rows="2"></textarea>
         <button class="btn full">➕ Add Car</button>
-      </form>
-    </div>
-    <h2 style="margin:16px 0 12px;font-size:13px;color:#71767b;
-      text-transform:uppercase;letter-spacing:.5px">
-      🚗 Cars ({len(cars)})</h2>
+      </form></div>
+    <h2 style="margin:16px 0 12px;font-size:13px;color:#71767b;text-transform:uppercase;letter-spacing:.5px">🚗 Cars ({len(cars)})</h2>
     <div>{cards or '<div class="empty"><div class="big">🚗</div>No cars</div>'}</div>"""
-    return web.Response(text=layout("Cars", body, "cars"),
-                        content_type="text/html")
+    return web.Response(text=layout("Cars", body, "cars"), content_type="text/html")
 
 async def car_add(req):
     d = await req.post()
-    await db.add_car(
-        d.get("name", "").strip(), d.get("desc", "").strip(),
-        int(d.get("price", 500) or 500),
-        int(d.get("tmin", 1) or 1),
-        int(d.get("tmax", 4000) or 4000),
-        d.get("closing", "").strip(),
-        d.get("image", "").strip())
+    await db.add_car(d.get("name", "").strip(), d.get("desc", "").strip(), int(d.get("price", 500) or 500), int(d.get("tmin", 1) or 1), int(d.get("tmax", 4000) or 4000), d.get("closing", "").strip(), d.get("image", "").strip())
     raise web.HTTPFound("/admin/cars")
 
 async def car_edit_get(req):
@@ -1194,72 +862,40 @@ async def car_edit_get(req):
     c = await db.get_car(cid)
     if not c: raise web.HTTPFound("/admin/cars")
     s = await db.car_stats(cid)
-    img = c[8] if len(c) > 8 and c[8] else ""
+    img = c['image'] or ""
     body = f"""
     <div class="card"><h2>✏️ Edit Car #{cid}</h2>
     <form method="POST" action="/admin/cars/{cid}">
-      <label>የመኪና ስም</label>
-      <input name="name" value="{html.escape(str(c[1]), quote=True)}" required>
-      <label>ዋጋ (ብር)</label>
-      <input name="price" type="number" value="{c[3]}">
-      <div class="form-grid">
-        <div><label>ዕጣ ከ</label>
-        <input name="tmin" type="number" value="{c[4]}"></div>
-        <div><label>ዕጣ እስከ</label>
-        <input name="tmax" type="number" value="{c[5]}"></div>
-      </div>
-      <label>የመዝጊያ ቀን</label>
-      <input name="closing" value="{html.escape(str(c[6] or ''), quote=True)}">
-      <label>ፎቶ URL</label>
-      <input name="image" value="{html.escape(str(img), quote=True)}" placeholder="https://example.com/car.jpg">
-      <label>ሁኔታ</label>
-      <select name="active">
-        <option value="1" {'selected' if c[7] else ''}>🟢 ንቁ</option>
-        <option value="0" {'' if c[7] else 'selected'}>🔴 ተዘግቷል</option>
-      </select>
-      <label>መግለጫ</label>
-      <textarea name="desc" rows="2">{html.escape(str(c[2] or ''))}</textarea>
+      <label>የመኪና ስም</label><input name="name" value="{html.escape(str(c['name']))}" required>
+      <label>ዋጋ (ብር)</label><input name="price" type="number" value="{c['price']}">
+      <div class="form-grid"><div><label>ዕጣ ከ</label><input name="tmin" type="number" value="{c['ticket_min']}"></div><div><label>ዕጣ እስከ</label><input name="tmax" type="number" value="{c['ticket_max']}"></div></div>
+      <label>የመዝጊያ ቀን</label><input name="closing" value="{html.escape(str(c['closing_date'] or ''))}">
+      <label>ፎቶ URL</label><input name="image" value="{html.escape(str(img))}" placeholder="https://example.com/car.jpg">
+      <label>ሁኔታ</label><select name="active"><option value="1" {'selected' if c['active'] else ''}>🟢 ንቁ</option><option value="0" {'' if c['active'] else 'selected'}>🔴 ተዘግቷል</option></select>
+      <label>መግለጫ</label><textarea name="desc" rows="2">{html.escape(str(c['description'] or ''))}</textarea>
       <button class="btn full">💾 Save</button>
-      <a href="/admin/cars" class="btn full"
-      style="background:#232a33;margin-top:8px;display:block;text-align:center">
-      Cancel</a>
+      <a href="/admin/cars" class="btn full" style="background:#232a33;margin-top:8px;display:block;text-align:center">Cancel</a>
     </form></div>
-    <div class="card">
-      <h2>📊 Statistics</h2>
+    <div class="card"><h2>📊 Statistics</h2>
       <div class="order-card">
-        <div class="row"><span class="k">Total</span>
-        <span><b>{s['total']}</b></span></div>
-        <div class="row"><span class="k">Approved</span>
-        <span>✅ {s['approved']}</span></div>
-        <div class="row"><span class="k">Pending</span>
-        <span>⏳ {s['pending']}</span></div>
-        <div class="row"><span class="k">Held</span>
-        <span>🔒 {s['held']}</span></div>
-        <div class="row"><span class="k">Blocked</span>
-        <span>🚫 {s['blocked']}</span></div>
-        <div class="row"><span class="k">Remaining</span>
-        <span><b style="color:#00ba7c">{s['remaining']}</b></span></div>
+        <div class="row"><span class="k">Total</span><span><b>{s['total']}</b></span></div>
+        <div class="row"><span class="k">Approved</span><span>✅ {s['approved']}</span></div>
+        <div class="row"><span class="k">Pending</span><span>⏳ {s['pending']}</span></div>
+        <div class="row"><span class="k">Held</span><span>🔒 {s['held']}</span></div>
+        <div class="row"><span class="k">Blocked</span><span>🚫 {s['blocked']}</span></div>
+        <div class="row"><span class="k">Remaining</span><span><b style="color:#00ba7c">{s['remaining']}</b></span></div>
       </div>
     </div>"""
-    return web.Response(text=layout("Edit Car", body, "cars"),
-                        content_type="text/html")
+    return web.Response(text=layout("Edit Car", body, "cars"), content_type="text/html")
 
 async def car_edit_post(req):
     cid = int(req.match_info["id"])
     d = await req.post()
-    await db.update_car(
-        cid, d.get("name", "").strip(), d.get("desc", "").strip(),
-        int(d.get("price", 500) or 500),
-        int(d.get("tmin", 1) or 1),
-        int(d.get("tmax", 4000) or 4000),
-        d.get("closing", "").strip(),
-        int(d.get("active", 1)),
-        d.get("image", "").strip())
+    await db.update_car(cid, d.get("name", "").strip(), d.get("desc", "").strip(), int(d.get("price", 500) or 500), int(d.get("tmin", 1) or 1), int(d.get("tmax", 4000) or 4000), d.get("closing", "").strip(), int(d.get("active", 1)), d.get("image", "").strip())
     raise web.HTTPFound("/admin/cars")
 
 async def car_del(req):
-    cid = int(req.match_info["id"])
-    await db.delete_car(cid)
+    await db.delete_car(int(req.match_info["id"]))
     raise web.HTTPFound("/admin/cars")
 
 # ---------- Orders ----------
@@ -1273,85 +909,52 @@ async def orders_list(req):
     cars = await db.list_cars(active_only=False)
     car_opts = '<option value="">ሁሉም</option>'
     for c in cars:
-        sel = "selected" if car_filter == c[0] else ""
-        car_opts += f'<option value="{c[0]}" {sel}>#{c[0]} {html.escape(str(c[1]), quote=True)}</option>'
+        sel = "selected" if car_filter == c['id'] else ""
+        car_opts += f'<option value="{c["id"]}" {sel}>#{c["id"]} {html.escape(str(c["name"]))}</option>'
     st_opts = '<option value="">ሁሉም</option>'
     for s in valid:
         sel = "selected" if status_filter == s else ""
         st_opts += f'<option value="{s}" {sel}>{s.title()}</option>'
 
-    orders = await db.list_orders(car_id=car_filter,
-                                  status=status_filter, limit=300)
+    orders = await db.list_orders(car_id=car_filter, status=status_filter, limit=300)
     cards = ""
     for o in orders:
-        oid, cid, uid, tno, name, phone, shot, st, reason, created, carname = o
         actions = ""
-        if st == "pending":
-            actions = f"""
-            <form method="POST" action="/admin/orders/{oid}/ok" style="flex:1">
-              <button class="btn g full s">✅ Approve</button></form>
-            <form method="POST" action="/admin/orders/{oid}/no" style="flex:1"
-             onsubmit="var r=prompt('ምክንያት:','');this.reason.value=r||'';
-             return r!==null">
-              <input type="hidden" name="reason">
-              <button class="btn r full s">❌ Reject</button></form>
-            """
-        elif st in ("held","blocked"):
-            actions = f"""
-            <form method="POST" action="/admin/orders/{oid}/release" style="flex:1"
-             onsubmit="return confirm('Release this ticket?')">
-              <button class="btn y full s">🔓 Release</button></form>
-            """
-        reason_html = ""
-        if reason:
-            reason_html = (f'<div class="row"><span class="k">Reason</span>'
-                           f'<span style="color:#71767b">{html.escape(str(reason), quote=True)}</span></div>')
-        user_line = html.escape(str(name), quote=True) if name else "—"
-        if uid:
-            user_line = f'<a href="tg://user?id={uid}">{name or "user"}</a>'
+        if o['status'] == "pending":
+            actions = f"""<form method="POST" action="/admin/orders/{o['id']}/ok" style="flex:1"><button class="btn g full s">✅ Approve</button></form>
+            <form method="POST" action="/admin/orders/{o['id']}/no" style="flex:1" onsubmit="var r=prompt('ምክንያት:','');this.reason.value=r||'';return r!==null"><input type="hidden" name="reason"><button class="btn r full s">❌ Reject</button></form>"""
+        elif o['status'] in ("held","blocked"):
+            actions = f"""<form method="POST" action="/admin/orders/{o['id']}/release" style="flex:1" onsubmit="return confirm('Release this ticket?')"><button class="btn y full s">🔓 Release</button></form>"""
+        
+        reason_html = f'<div class="row"><span class="k">Reason</span><span style="color:#71767b">{html.escape(str(o["reason"]))}</span></div>' if o['reason'] else ""
+        user_line = html.escape(str(o['full_name'])) if o['full_name'] else "—"
+        if o['user_id']: user_line = f'<a href="tg://user?id={o["user_id"]}">{o["full_name"] or "user"}</a>'
+        
         cards += f"""<div class="order-card">
-          <div class="row">
-            <span><b>#{oid}</b> · {html.escape(str(carname or '-'), quote=True)}</span>
-            <span class="badge {st}">{st}</span>
-          </div>
-          <div class="row"><span class="k">Ticket</span>
-          <span><b style="color:#1d9bf0;font-size:16px">🎟️ {tno}</b></span></div>
-          <div class="row"><span class="k">User</span>
-          <span>{user_line}</span></div>
-          <div class="row"><span class="k">Phone</span>
-          {f'<a href="tel:{html.escape(str(phone), quote=True)}">{html.escape(str(phone), quote=True)}</a>' if phone else '—'}</div>
+          <div class="row"><span><b>#{o['id']}</b> · {html.escape(str(o['name'] or '-'))}</span><span class="badge {o['status']}">{o['status']}</span></div>
+          <div class="row"><span class="k">Ticket</span><span><b style="color:#1d9bf0;font-size:16px">🎟️ {o['ticket_no']}</b></span></div>
+          <div class="row"><span class="k">User</span><span>{user_line}</span></div>
+          <div class="row"><span class="k">Phone</span>{f'<a href="tel:{html.escape(str(o["phone"]))}">{html.escape(str(o["phone"]))}</a>' if o['phone'] else '—'}</div>
           {reason_html}
-          <div class="row"><span class="k">Date</span>
-          <span style="font-size:11px;color:#71767b">{created[:16]}</span></div>
+          <div class="row"><span class="k">Date</span><span style="font-size:11px;color:#71767b">{o['created_at'].strftime('%Y-%m-%d %H:%M')}</span></div>
           <div class="actions">{actions}</div>
         </div>"""
 
     body = f"""
-    <div class="card">
-      <h2>🔍 Filter</h2>
-      <form method="GET">
-        <label>መኪና</label><select name="car_id">{car_opts}</select>
-        <label>ሁኔታ</label><select name="status">{st_opts}</select>
-        <button class="btn full">Apply</button>
-      </form>
+    <div class="card"><h2>🔍 Filter</h2>
+      <form method="GET"><label>መኪና</label><select name="car_id">{car_opts}</select><label>ሁኔታ</label><select name="status">{st_opts}</select><button class="btn full">Apply</button></form>
     </div>
-    <h2 style="margin:16px 0 12px;font-size:13px;color:#71767b;
-      text-transform:uppercase;letter-spacing:.5px">
-      📋 Orders ({len(orders)})</h2>
+    <h2 style="margin:16px 0 12px;font-size:13px;color:#71767b;text-transform:uppercase;letter-spacing:.5px">📋 Orders ({len(orders)})</h2>
     <div>{cards or '<div class="empty"><div class="big">📭</div>No orders</div>'}</div>"""
-    return web.Response(text=layout("Orders", body, "orders"),
-                        content_type="text/html")
+    return web.Response(text=layout("Orders", body, "orders"), content_type="text/html")
 
 async def order_ok(req):
     oid = int(req.match_info["id"])
     o = await db.get_order(oid)
-    if o and o[7] == "pending":
-        changed = await db.update_order_status(oid, "approved", expected_status="pending", actor="web_admin")
-        if changed:
-            car = await db.get_car(o[1])
-            try:
-                await bot.send_message(o[2], t("am", "approved",
-                    car=car[1] if car else "-", ticket=o[3]))
+    if o and o['status'] == "pending":
+        if await db.update_order_status(oid, "approved", expected_status="pending", actor="web_admin"):
+            car = await db.get_car(o['car_id'])
+            try: await bot.send_message(o['user_id'], t("am", "approved", car=car['name'] if car else "-", ticket=o['ticket_no']))
             except Exception as e: log.error(e)
     raise web.HTTPFound(req.headers.get("Referer", "/admin/orders"))
 
@@ -1360,17 +963,14 @@ async def order_no(req):
     d = await req.post()
     reason = (d.get("reason") or "").strip() or "ያልተገለጸ"
     o = await db.get_order(oid)
-    if o and o[7] == "pending":
-        changed = await db.update_order_status(oid, "rejected", reason, expected_status="pending", actor="web_admin")
-        if changed:
-            try:
-                await bot.send_message(o[2], t("am", "rejected", reason=reason))
+    if o and o['status'] == "pending":
+        if await db.update_order_status(oid, "rejected", reason, expected_status="pending", actor="web_admin"):
+            try: await bot.send_message(o['user_id'], t("am", "rejected", reason=reason))
             except Exception as e: log.error(e)
     raise web.HTTPFound(req.headers.get("Referer", "/admin/orders"))
 
 async def order_release(req):
-    oid = int(req.match_info["id"])
-    await db.release_order(oid)
+    await db.release_order(int(req.match_info["id"]))
     raise web.HTTPFound(req.headers.get("Referer", "/admin/orders"))
 
 # ---------- Holds ----------
@@ -1378,65 +978,39 @@ async def holds_page(req):
     cars = await db.list_cars(active_only=False)
     car_opts = '<option value="">መኪና ይምረጡ</option>'
     for c in cars:
-        car_opts += f'<option value="{c[0]}">#{c[0]} {html.escape(str(c[1]), quote=True)} ({c[4]}–{c[5]})</option>'
+        car_opts += f'<option value="{c["id"]}">#{c["id"]} {html.escape(str(c["name"]))} ({c["ticket_min"]}–{c["ticket_max"]})</option>'
 
     orders = await db.list_orders(status="held", limit=100)
     blocked = await db.list_orders(status="blocked", limit=100)
     items = ""
     for o in orders + blocked:
-        oid, cid, uid, tno, name, phone, shot, st, reason, created, carname = o
         items += f"""<div class="order-card">
-          <div class="row">
-            <span><b>🎟️ {tno}</b> · {carname or '-'}</span>
-            <span class="badge {st}">{st}</span>
-          </div>
-          <div class="row"><span class="k">User</span>
-          <span>{name or ('ID: '+str(uid) if uid else '—')}</span></div>
-          <div class="actions">
-            <form method="POST" action="/admin/orders/{oid}/release" style="flex:1"
-             onsubmit="return confirm('Release #{tno}?')">
-              <button class="btn y full s">🔓 Release</button></form>
-          </div>
+          <div class="row"><span><b>🎟️ {o['ticket_no']}</b> · {o['name'] or '-'}</span><span class="badge {o['status']}">{o['status']}</span></div>
+          <div class="row"><span class="k">User</span><span>{o['full_name'] or ('ID: '+str(o['user_id']) if o['user_id'] else '—')}</span></div>
+          <div class="actions"><form method="POST" action="/admin/orders/{o['id']}/release" style="flex:1" onsubmit="return confirm('Release #{o['ticket_no']}?')"><button class="btn y full s">🔓 Release</button></form></div>
         </div>"""
 
     body = f"""
-    <div class="card">
-      <h2>🚫 Block Numbers</h2>
+    <div class="card"><h2>🚫 Block Numbers</h2>
       <form method="POST" action="/admin/holds/block">
-        <label>መኪና</label>
-        <select name="car_id" required>{car_opts}</select>
-        <div class="form-grid">
-          <div><label>ከ ቁጥር</label>
-          <input name="n_from" type="number" required min="1"></div>
-          <div><label>እስከ ቁጥር</label>
-          <input name="n_to" type="number" required min="1"></div>
-        </div>
-        <label>ምክንያት</label>
-        <input name="reason" placeholder="ለምሳሌ: የአድሚን መያዣ">
+        <label>መኪና</label><select name="car_id" required>{car_opts}</select>
+        <div class="form-grid"><div><label>ከ ቁጥር</label><input name="n_from" type="number" required min="1"></div><div><label>እስከ ቁጥር</label><input name="n_to" type="number" required min="1"></div></div>
+        <label>ምክንያት</label><input name="reason" placeholder="ለምሳሌ: የአድሚን መያዣ">
         <button class="btn full r">🚫 Block</button>
       </form>
     </div>
-    <h2 style="margin:16px 0 12px;font-size:13px;color:#71767b;
-      text-transform:uppercase;letter-spacing:.5px">
-      🔒 Held / 🚫 Blocked ({len(orders) + len(blocked)})</h2>
+    <h2 style="margin:16px 0 12px;font-size:13px;color:#71767b;text-transform:uppercase;letter-spacing:.5px">🔒 Held / 🚫 Blocked ({len(orders) + len(blocked)})</h2>
     <div>{items or '<div class="empty"><div class="big">🔓</div>No held/blocked</div>'}</div>"""
-    return web.Response(text=layout("Holds", body, "holds"),
-                        content_type="text/html")
+    return web.Response(text=layout("Holds", body, "holds"), content_type="text/html")
 
 async def hold_block(req):
     d = await req.post()
     try:
-        car_id = int(d.get("car_id"))
-        n_from = int(d.get("n_from"))
-        n_to = int(d.get("n_to"))
-        reason = d.get("reason", "").strip()
-        if n_from > n_to:
-            n_from, n_to = n_to, n_from
-        if n_to - n_from > 500:
-            raise ValueError("Range too large (max 500)")
+        car_id = int(d.get("car_id")); n_from = int(d.get("n_from")); n_to = int(d.get("n_to")); reason = d.get("reason", "").strip()
+        if n_from > n_to: n_from, n_to = n_to, n_from
+        if n_to - n_from > 500: raise ValueError("Range too large")
         await db.block_range(car_id, n_from, n_to, reason)
-    except Exception as e:
-        log.error(f"Block failed: {e}")
+    except Exception as e: log.error(f"Block failed: {e}")
     raise web.HTTPFound("/admin/holds")
 
 # ---------- Broadcast ----------
@@ -1444,80 +1018,39 @@ async def broadcast_page(req):
     cars = await db.list_cars(active_only=False)
     car_opts = '<option value="all">👥 ሁሉም ተጠቃሚዎች (All Users)</option>'
     for c in cars:
-        car_opts += f'<option value="{c[0]}">🚗 #{c[0]} {html.escape(str(c[1]), quote=True)} የገዙ</option>'
+        car_opts += f'<option value="{c["id"]}">🚗 #{c["id"]} {html.escape(str(c["name"]))} የገዙ</option>'
     body = f"""
-    <div class="card">
-      <h2>📢 መልእክት ላክ (Broadcast)</h2>
+    <div class="card"><h2>📢 መልእክት ላክ (Broadcast)</h2>
       <form method="POST" action="/admin/broadcast/send">
-        <label>ለማን ይላክ?</label>
-        <select name="target">{car_opts}</select>
-        <label>መልእክት</label>
-        <textarea name="message" rows="6" required
-        placeholder="የመልእክት ጽሑፍ... ለምሳሌ: ⚠️ ነገ የመጨረሻ ቀን ነው!"></textarea>
+        <label>ለማን ይላክ?</label><select name="target">{car_opts}</select>
+        <label>መልእክት</label><textarea name="message" rows="6" required placeholder="የመልእክት ጽሑፍ..."></textarea>
         <button class="btn full">📤 መልእክት ላክ</button>
-      </form>
-    </div>
-    <div class="card">
-      <p style="color:#71767b;font-size:13px;line-height:1.6">
-        ⚠️ <b>ማሳሰቢያ:</b><br>
-        • መልእክቱ በቀጥታ ለተጠቃሚዎች ይላካል<br>
-        • ብዙ ተጠቃሚዎች ካሉ (500+) ሊወስድ ይችላል<br>
-        • HTML tags ይደገፋሉ (&lt;b&gt;, &lt;i&gt;, &lt;code&gt;)
-      </p>
-    </div>"""
-    return web.Response(text=layout("Broadcast", body, "broadcast"),
-                        content_type="text/html")
+      </form></div>
+    <div class="card"><p style="color:#71767b;font-size:13px;line-height:1.6">⚠️ <b>ማሳሰቢያ:</b><br>• መልእክቱ በቀጥታ ለተጠቃሚዎች ይላካል<br>• ብዙ ተጠቃሚዎች ካሉ (500+) ሊወስድ ይችላል<br>• HTML tags ይደገፋሉ (&lt;b&gt;, &lt;i&gt;, &lt;code&gt;)</p></div>"""
+    return web.Response(text=layout("Broadcast", body, "broadcast"), content_type="text/html")
 
 async def broadcast_send(req):
-    d = await req.post()
-    target = d.get("target", "all")
-    message = d.get("message", "").strip()
-
-    if not message:
-        raise web.HTTPFound("/admin/broadcast")
-
-    if target == "all":
-        user_ids = await db.get_all_user_ids()
-    else:
-        user_ids = await db.get_users_by_car(int(target))
-
-    sent = 0
-    failed = 0
+    d = await req.post(); target = d.get("target", "all"); message = d.get("message", "").strip()
+    if not message: raise web.HTTPFound("/admin/broadcast")
+    user_ids = await db.get_all_user_ids() if target == "all" else await db.get_users_by_car(int(target))
+    sent = 0; failed = 0
     for uid in user_ids:
-        try:
-            await bot.send_message(uid, message)
-            sent += 1
-            await asyncio.sleep(0.05)
-        except Exception as e:
-            log.error(f"Broadcast failed for {uid}: {e}")
-            failed += 1
-
-    body = f"""
-    <div class="card">
-      <h2>✅ Broadcast አልቋል</h2>
-      <div class="grid">
-        <div class="stat green"><div class="lbl">Sent</div>
-        <div class="val">{sent}</div></div>
-        <div class="stat red"><div class="lbl">Failed</div>
-        <div class="val">{failed}</div></div>
-      </div>
-      <a href="/admin/broadcast" class="btn full"
-      style="margin-top:16px">🔙 Back to Broadcast</a>
-    </div>"""
-    return web.Response(text=layout("Broadcast Result", body, "broadcast"),
-                        content_type="text/html")
+        try: await bot.send_message(uid, message); sent += 1; await asyncio.sleep(0.05)
+        except Exception: failed += 1
+    body = f"""<div class="card"><h2>✅ Broadcast አልቋል</h2>
+    <div class="grid"><div class="stat green"><div class="lbl">Sent</div><div class="val">{sent}</div></div><div class="stat red"><div class="lbl">Failed</div><div class="val">{failed}</div></div></div>
+    <a href="/admin/broadcast" class="btn full" style="margin-top:16px">🔙 Back to Broadcast</a></div>"""
+    return web.Response(text=layout("Broadcast Result", body, "broadcast"), content_type="text/html")
 
 async def audit_page(req):
     rows = await db.list_audit_logs(250)
     cards = ""
     for row in rows:
-        lid, actor, action, entity_type, entity_id, details, created = row
         cards += f"""<div class="order-card">
-          <div class="row"><b>#{lid} · {html.escape(str(action), quote=True)}</b>
-          <span style="font-size:11px;color:#71767b">{html.escape(str(created), quote=True)}</span></div>
-          <div class="row"><span class="k">Actor</span><span>{html.escape(str(actor), quote=True)}</span></div>
-          <div class="row"><span class="k">Entity</span><span>{html.escape(str(entity_type or '-'), quote=True)} #{entity_id or '-'}</span></div>
-          <div class="row"><span class="k">Details</span><span>{html.escape(str(details or '-'), quote=True)}</span></div>
+          <div class="row"><b>#{row['id']} · {html.escape(str(row['action']))}</b><span style="font-size:11px;color:#71767b">{row['created_at'].strftime('%Y-%m-%d %H:%M')}</span></div>
+          <div class="row"><span class="k">Actor</span><span>{html.escape(str(row['actor']))}</span></div>
+          <div class="row"><span class="k">Entity</span><span>{html.escape(str(row['entity_type'] or '-'))} #{row['entity_id'] or '-'}</span></div>
+          <div class="row"><span class="k">Details</span><span>{html.escape(str(row['details'] or '-'))}</span></div>
         </div>"""
     return web.Response(text=layout("Audit Log", cards or '<div class="empty">No audit events yet</div>', "audit"), content_type="text/html")
 
@@ -1554,11 +1087,9 @@ async def on_startup(app):
     await db.init_db()
     asyncio.create_task(reminder_task())
     log.info("🔔 Reminder task started")
-
     if cfg.USE_WEBHOOK:
         url = f"{cfg.WEBHOOK_URL}{cfg.WEBHOOK_PATH}"
-        await bot.set_webhook(url, secret_token=cfg.WEBHOOK_SECRET,
-                              drop_pending_updates=True)
+        await bot.set_webhook(url, secret_token=cfg.WEBHOOK_SECRET, drop_pending_updates=True)
         log.info(f"✅ Webhook set: {url}")
 
 async def on_shutdown(app):
@@ -1568,12 +1099,10 @@ async def on_shutdown(app):
 
 def main():
     cfg.validate_settings()
-    db.DB_PATH = cfg.DATABASE_PATH
+    db.DATABASE_URL = cfg.DATABASE_URL # 👈 ወደ Postgres URL ተቀይሯል
     app = build_web()
     if cfg.USE_WEBHOOK:
-        SimpleRequestHandler(dispatcher=dp, bot=bot,
-                             secret_token=cfg.WEBHOOK_SECRET
-                             ).register(app, path=cfg.WEBHOOK_PATH)
+        SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=cfg.WEBHOOK_SECRET).register(app, path=cfg.WEBHOOK_PATH)
         setup_application(app, dp, bot=bot)
         app.on_startup.append(on_startup)
         app.on_cleanup.append(on_shutdown)
